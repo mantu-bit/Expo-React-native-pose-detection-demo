@@ -1,4 +1,4 @@
-import { Platform, Text } from "react-native";
+import { Platform, Text, View } from "react-native";
 import React, { useEffect, useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button, ScreenWrapper } from "@/components";
@@ -26,6 +26,7 @@ import {
   VisionCameraProxy,
 } from "react-native-vision-camera";
 import { useSharedValue } from "react-native-worklets-core";
+import { usePoseDetection } from "./usePosedetection";
 
 const LINES = [
   [0, 1],
@@ -93,12 +94,21 @@ const Home = () => {
 
   const landmarks = useSharedValue({});
   const { hasPermission, requestPermission } = useCameraPermission();
-  const [cameraPosition, setCameraPosition] = useState("front");
+  const [cameraPosition, setCameraPosition] = useState("back");
   const [showLines, setShowLines] = useState(true);
   const [showCircles, setShowCircles] = useState(true);
   const device = useCameraDevice(cameraPosition);
 
   const pixelFormat = Platform.OS === "ios" ? "rgb" : "yuv";
+
+  // Use the hook
+  const {
+    landmarks: landmarksData,
+    status,
+    error,
+    poseCount,
+    isInitialized,
+  } = usePoseDetection();
 
   const onPressLogout = () => {
     dispatch(logout());
@@ -117,7 +127,8 @@ const Home = () => {
 
     // Subscribe to landmarks detected events
     const landmarksSubscription = addPoseLandmarksListener((event) => {
-      console.log("Landmarks detected:", JSON.stringify(event.landmarks));
+      console.log("Landmarks detected:", JSON.stringify(event.landmarks[0]));
+      landmarks.value = event.landmarks[0];
       // setLandmarks(event.landmarks);
       // setPoseCount((prev) => prev + 1);
     });
@@ -193,11 +204,7 @@ const Home = () => {
   }
 
   return (
-    <ScreenWrapper style={styles.container}>
-      <Text style={styles.title}>
-        Welcome {user?.email} {hello()}
-      </Text>
-
+    <>
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}
@@ -209,9 +216,7 @@ const Home = () => {
         photo={false}
         // fps={30}
       />
-
-      <Button title="Logout" style={styles.btnStyle} onPress={onPressLogout} />
-    </ScreenWrapper>
+    </>
   );
 };
 
