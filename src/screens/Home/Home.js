@@ -129,8 +129,6 @@ const Home = () => {
     const landmarksSubscription = addPoseLandmarksListener((event) => {
       console.log("Landmarks detected:", JSON.stringify(event.landmarks[0]));
       landmarks.value = event.landmarks[0];
-      // setLandmarks(event.landmarks);
-      // setPoseCount((prev) => prev + 1);
     });
 
     // Subscribe to status events
@@ -205,6 +203,25 @@ const Home = () => {
 
   return (
     <>
+      <View style={styles.drawControl}>
+        <Button
+          style={{ width: 100 }}
+          title={showLines ? "Hide lines" : "Show lines"}
+          onPress={() => setShowLines(!showLines)}
+        />
+        <Button
+          style={{ width: 100 }}
+          title={showCircles ? "Hide circles" : "Show circles"}
+          onPress={() => setShowCircles(!showCircles)}
+        />
+        <Button
+          style={{ width: 100 }}
+          title="Change camera"
+          onPress={() =>
+            setCameraPosition((prev) => (prev === "front" ? "back" : "front"))
+          }
+        />
+      </View>
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}
@@ -223,6 +240,17 @@ const Home = () => {
 export default Home;
 
 const styles = StyleSheet.create((theme) => ({
+  drawControl: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: "#FFF",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 10,
+  },
   container: {
     padding: ms(20),
     justifyContent: "center",

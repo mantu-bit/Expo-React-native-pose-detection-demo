@@ -1,4 +1,4 @@
-import { NativeModule, requireNativeModule } from "expo";
+import { NativeModule, NativeModuleType, requireNativeModule } from "expo";
 import {
   ExpoPoseDetectionHandler,
   ExpoPoseDetectionModuleEvents,
@@ -6,5 +6,5 @@ import {
 
 // This call loads the native module object from the JSI
 export const ExpoPoseDetectionModule = requireNativeModule<
-  NativeModule<ExpoPoseDetectionModuleEvents> & ExpoPoseDetectionHandler
+  NativeModuleType<ExpoPoseDetectionModuleEvents> & ExpoPoseDetectionHandler
 >("ExpoPoseDetection");

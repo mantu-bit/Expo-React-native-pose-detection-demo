@@ -8,7 +8,7 @@ import {
 } from "../../../modules/expo-pose-detection";
 
 export function usePoseDetection() {
-  const [landmarks, setLandmarks] = useState<PoseLandmark[][]>([]);
+  const [landmarks, setLandmarks] = useState<PoseLandmark[]>([]);
   const [status, setStatus] = useState<string>("Initializing...");
   const [error, setError] = useState<string | null>(null);
   const [poseCount, setPoseCount] = useState(0);
@@ -35,8 +35,8 @@ export function usePoseDetection() {
     // Subscribe to events
     const landmarksSubscription = addPoseLandmarksListener((event) => {
       if (mounted) {
-        setLandmarks(event.landmarks);
-        setPoseCount((prev) => prev + 1);
+        setLandmarks(event.landmarks[0]);
+        // setPoseCount((prev) => prev + 1);
       }
     });
 
