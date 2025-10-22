@@ -27,7 +27,6 @@ export type ExpoPoseDetectionModuleEvents = {
 
 export interface ExpoPoseDetectionHandler {
   hello(): string;
-  initModel(): Promise<void>;
   addListener(
     eventName: keyof ExpoPoseDetectionModuleEvents,
     listener: (event: any) => void

@@ -1,0 +1,15 @@
+diff --git a/node_modules/react-native-vision-camera/src/skia/useSkiaFrameProcessor.ts b/node_modules/react-native-vision-camera/src/skia/useSkiaFrameProcessor.ts
+index 62e27d3..3f4876f 100644
+--- a/node_modules/react-native-vision-camera/src/skia/useSkiaFrameProcessor.ts
++++ b/node_modules/react-native-vision-camera/src/skia/useSkiaFrameProcessor.ts
+@@ -95,7 +95,9 @@ function withRotatedFrame(frame: Frame, canvas: SkCanvas, previewOrientation: Or
+         break
+       case 'landscape-left':
+         // rotate two flips on (0,0) origin and move X + Y into view again
+-        canvas.translate(frame.height, frame.width)
++        // canvas.translate(frame.height, frame.width)
++        canvas.scale(-1, 1); // Flip the canvas horizontally
++        canvas.translate(-frame.height, frame.width); // Adjust the canvas position after flipping
+         canvas.rotate(270, 0, 0)
+         break
+       case 'portrait-upside-down':

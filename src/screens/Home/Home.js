@@ -1,15 +1,13 @@
 import { Platform, Text, View } from "react-native";
 import React, { useEffect, useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Button, ScreenWrapper } from "@/components";
+import { Button } from "@/components";
 import { fonts } from "@/theme";
 import { ms } from "@/utils";
 import { useDispatch, useSelector } from "react-redux";
 import { logout } from "@/redux/actions/authAction";
 import { Skia } from "@shopify/react-native-skia";
 import {
-  hello,
-  initModel,
   addPoseLandmarksListener,
   addPoseStatusListener,
   addPoseErrorListener,
@@ -17,16 +15,12 @@ import {
 
 import {
   Camera,
-  CameraPosition,
-  Frame,
   useCameraDevice,
-  useCameraFormat,
   useCameraPermission,
   useSkiaFrameProcessor,
   VisionCameraProxy,
 } from "react-native-vision-camera";
 import { useSharedValue } from "react-native-worklets-core";
-import { usePoseDetection } from "./usePosedetection";
 
 const LINES = [
   [0, 1],
@@ -99,32 +93,16 @@ const Home = () => {
   const [showCircles, setShowCircles] = useState(true);
   const device = useCameraDevice(cameraPosition);
 
-  const pixelFormat = Platform.OS === "ios" ? "rgb" : "yuv";
-
-  // Use the hook
-  const {
-    landmarks: landmarksData,
-    status,
-    error,
-    poseCount,
-    isInitialized,
-  } = usePoseDetection();
+  const pixelFormat =
+    Platform.OS === "ios"
+      ? "rgb" // Force RGB for front camera
+      : "yuv"; // Use YUV for back camera
 
   const onPressLogout = () => {
     dispatch(logout());
   };
 
   useEffect(() => {
-    // Initialize the model
-    initModel()
-      .then(() => {
-        console.log("Model initialized successfully");
-      })
-      .catch((err) => {
-        console.error("Failed to initialize model:", err);
-        setError(err.message);
-      });
-
     // Subscribe to landmarks detected events
     const landmarksSubscription = addPoseLandmarksListener((event) => {
       console.log("Landmarks detected:", JSON.stringify(event.landmarks[0]));
@@ -157,20 +135,20 @@ const Home = () => {
     (frame) => {
       "worklet";
 
-      // Process the frame using the 'poseLandmarks' function
       frame.render();
+
+      // Process pose landmarks
       poseLandmarks(frame);
+
       if (
         landmarks?.value !== undefined &&
         Object.keys(landmarks?.value).length > 0
       ) {
         let body = landmarks?.value;
-
-        console.log("🚀 ~ Exercise ~ body ===> ", body);
-
         let frameWidth = frame.width;
         let frameHeight = frame.height;
-        // Draw line on landmarks
+
+        // Draw lines
         if (showLines) {
           for (let [from, to] of LINES) {
             frame.drawLine(
@@ -181,7 +159,9 @@ const Home = () => {
               linePaint
             );
           }
-        } // Draw circles on landmarks
+        }
+
+        // Draw circles
         if (showCircles) {
           for (let mark of Object.values(body)) {
             frame.drawCircle(
@@ -205,17 +185,17 @@ const Home = () => {
     <>
       <View style={styles.drawControl}>
         <Button
-          style={{ width: 100 }}
+          style={{ width: 120 }}
           title={showLines ? "Hide lines" : "Show lines"}
           onPress={() => setShowLines(!showLines)}
         />
         <Button
-          style={{ width: 100 }}
+          style={{ width: 120 }}
           title={showCircles ? "Hide circles" : "Show circles"}
           onPress={() => setShowCircles(!showCircles)}
         />
         <Button
-          style={{ width: 100 }}
+          style={{ width: 120 }}
           title="Change camera"
           onPress={() =>
             setCameraPosition((prev) => (prev === "front" ? "back" : "front"))

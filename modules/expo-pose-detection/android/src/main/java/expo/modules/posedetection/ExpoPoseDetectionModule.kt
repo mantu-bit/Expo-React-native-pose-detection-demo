@@ -36,19 +36,35 @@ class ExpoPoseDetectionModule : Module() {
       "onPoseLandmarksError"
     )
 
-    // Exposed function to JS
-    AsyncFunction("initModel") {
+    // ADD THIS: Lifecycle callbacks for event observation
+    OnStartObserving("onPoseLandmarksDetected") {
+      Log.d("ExpoPoseDetection", "Started observing pose landmarks")
+      // Ensure model is initialized when JavaScript starts listening
+      if (PoseLandmarkerHolder.poseLandmarker == null) {
+        initModel()
+      }
+    }
+
+    OnStopObserving("onPoseLandmarksDetected") {
+      Log.d("ExpoPoseDetection", "Stopped observing pose landmarks")
+    }
+
+    // CHANGE THIS: Make initModel synchronous and call it on module creation
+    OnCreate {
+      Log.d("ExpoPoseDetection", "Module created, initializing model")
       initModel()
     }
 
-    // Defines a JavaScript synchronous function that runs the native code on the JavaScript thread.
     Function("hello") {
       "Hello react native! 👋"
     }
   }
 
   private fun initModel() {
+    // REMOVE THIS CHECK - allow re-initialization
+    // This was preventing the model from reinitializing on camera switch
     if (PoseLandmarkerHolder.poseLandmarker != null) {
+      Log.d("ExpoPoseDetection", "Model already initialized")
       sendEvent("onPoseLandmarksStatus", bundleOf("status" to "Model already initialized"))
       return
     }
@@ -90,10 +106,11 @@ class ExpoPoseDetectionModule : Module() {
       PoseLandmarkerHolder.poseLandmarker =
         PoseLandmarker.createFromOptions(context, poseLandmarkerOptions)
 
+      Log.d("ExpoPoseDetection", "Model initialized successfully")
       sendEvent("onPoseLandmarksStatus", bundleOf("status" to "Model initialized successfully"))
     } catch (e: Exception) {
       Log.e("PoseLandmarksFrameProcessor", "Error initializing PoseLandmarker", e)
-      sendEvent("onPoseLandmarksError", bundleOf("error" to e.message))
+      sendEvent("onPoseLandmarksError", bundleOf("error" to (e.message ?: "Unknown error")))
     }
   }
 }

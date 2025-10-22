@@ -20,11 +20,6 @@ export function hello(): string {
   return ExpoPoseDetectionModule.hello();
 }
 
-// Export async function
-export async function initModel(): Promise<void> {
-  return await ExpoPoseDetectionModule.initModel();
-}
-
 // Event listener helpers
 export function addPoseLandmarksListener(
   listener: (event: PoseLandmarksDetectedEvent) => void

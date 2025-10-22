@@ -17,21 +17,6 @@ export function usePoseDetection() {
   useEffect(() => {
     let mounted = true;
 
-    // Initialize model
-    initModel()
-      .then(() => {
-        if (mounted) {
-          setIsInitialized(true);
-          console.log("Model initialized");
-        }
-      })
-      .catch((err) => {
-        if (mounted) {
-          setError(err.message);
-          console.error("Init error:", err);
-        }
-      });
-
     // Subscribe to events
     const landmarksSubscription = addPoseLandmarksListener((event) => {
       if (mounted) {
