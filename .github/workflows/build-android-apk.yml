@@ -1,0 +1,209 @@
+name: Build & Auto Release Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type (development, staging, production)"
+        required: true
+        default: "development"
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+jobs:
+  build-apk:
+    name: Build APK & Create Auto Versioned Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      # -----------------------------
+      # 🧩 Setup Environment
+      # -----------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # Use setup-gradle action for better caching
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: wrapper
+          cache-read-only: false
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Setup Expo CLI
+        run: |
+          yarn global add @expo/cli
+          npx expo install --fix
+
+      - name: Prebuild Android
+        run: npx expo prebuild --platform android
+
+      # -----------------------------
+      # 🏗️ Determine Build Type
+      # -----------------------------
+      - name: Determine Build Type
+        id: build_type
+        run: |
+          if [ "${{ github.event.inputs.build_type }}" != "" ]; then
+            TYPE="${{ github.event.inputs.build_type }}"
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            TYPE="production"
+          elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+            TYPE="development"
+          else
+            TYPE="staging"
+          fi
+          echo "type=$TYPE" >> $GITHUB_OUTPUT
+
+      # -----------------------------
+      # 🏷️ Determine Next Version Tag
+      # -----------------------------
+      - name: Get Next Version Tag
+        id: version
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Last tag: $LAST_TAG"
+
+          # Strip leading 'v' if present
+          CLEAN_TAG=${LAST_TAG#v}
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CLEAN_TAG"
+          PATCH=$((PATCH + 1))
+
+          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}-${{ steps.build_type.outputs.type }}"
+          echo "Next tag: $NEXT_TAG"
+          echo "next_tag=$NEXT_TAG" >> $GITHUB_OUTPUT
+
+      # -----------------------------
+      # 🏗️ Build APK (Optimized)
+      # -----------------------------
+      - name: Build APK
+        run: |
+          cd android
+          ./gradlew assembleRelease --console=verbose --no-daemon
+        env:
+          EXPO_PUBLIC_BASE_URL: "https://base-url/api/v1/"
+          EXPO_PUBLIC_SOCKET_URL: "https://socket-url.tech"
+
+      # -----------------------------
+      # 📦 Rename APK
+      # -----------------------------
+      - name: Rename APK
+        run: |
+          BUILD_TYPE="${{ steps.build_type.outputs.type }}"
+          VERSION="${{ steps.version.outputs.next_tag }}"
+          OLD_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          NEW_NAME="pose_detection_${BUILD_TYPE}_${VERSION}.apk"
+          NEW_PATH="android/app/build/outputs/apk/release/${NEW_NAME}"
+
+          mv "$OLD_PATH" "$NEW_PATH"
+          echo "APK_PATH=$NEW_PATH" >> $GITHUB_ENV
+          echo "APK_NAME=$NEW_NAME" >> $GITHUB_ENV
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_NAME }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 30
+
+      # -----------------------------
+      # 📝 Generate Changelog
+      # -----------------------------
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            CHANGELOG_HEADER="## 🎉 Initial Release"
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGELOG_HEADER="## 📝 Changes since $LATEST_TAG"
+            COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          BUILD_TYPE="${{ steps.build_type.outputs.type }}"
+          BUILD_DATE=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          echo "${CHANGELOG_HEADER}" > changelog.txt
+          echo "" >> changelog.txt
+          echo "${COMMITS}" >> changelog.txt
+          echo "" >> changelog.txt
+          echo "---" >> changelog.txt
+          echo "" >> changelog.txt
+          echo "## 📱 Human Pose Detection Demo ($BUILD_TYPE)" >> changelog.txt
+          echo "" >> changelog.txt
+          echo "### ✅ Features" >> changelog.txt
+          echo "- Real-time pose detection with 33 keypoints" >> changelog.txt
+          echo "- Native MediaPipe Pose Landmarker integration" >> changelog.txt
+          echo "- Custom Expo Module bridge (Android)" >> changelog.txt
+          echo "- Camera overlay with skeleton rendering" >> changelog.txt
+          echo "- Configurable visual styles" >> changelog.txt
+          echo "" >> changelog.txt
+          echo "### 🔧 Build Info" >> changelog.txt
+          echo "- Environment: **$BUILD_TYPE**" >> changelog.txt
+          echo "- Commit: \`${{ github.sha }}\`" >> changelog.txt
+          echo "- Build Date: $BUILD_DATE" >> changelog.txt
+
+      # -----------------------------
+      # 🏷️ Create & Push Git Tag
+      # -----------------------------
+      - name: Create and Push Git Tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git tag -a "${{ steps.version.outputs.next_tag }}" -m "Release ${{ steps.version.outputs.next_tag }}"
+          git push origin "${{ steps.version.outputs.next_tag }}"
+
+      # -----------------------------
+      # 🚀 Create GitHub Release
+      # -----------------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.next_tag }}
+          name: "Human Pose Detection Demo - ${{ steps.build_type.outputs.type }} ${{ steps.version.outputs.next_tag }}"
+          body_path: changelog.txt
+          files: ${{ env.APK_PATH }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------
+      # 🧾 Upload Build Logs
+      # -----------------------------
+      - name: Upload Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ steps.build_type.outputs.type }}-${{ github.sha }}
+          path: android/app/build/outputs/logs/
+          retention-days: 7
+          if-no-files-found: ignore

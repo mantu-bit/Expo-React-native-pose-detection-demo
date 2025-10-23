@@ -282,7 +282,55 @@ The app requires camera permissions to function. Make sure to grant camera acces
 - Check that the pose detection model is properly loaded
 - Verify MediaPipe dependencies are correctly installed
 
-## EAS Build
+## Build & Deployment
+
+### GitHub Actions Workflows
+
+This project includes an automated GitHub Actions workflow for building and releasing APK files:
+
+#### Available Workflow
+
+**`build-android-apk.yml`** - Build & Auto Release Android APK
+
+- **Manual dispatch only** with build type selection (development, staging, production)
+- Automatic version tagging and GitHub release creation
+- APK artifacts uploaded to GitHub releases
+- Build logs and changelog generation
+- Environment-specific builds with proper naming
+
+**Features:**
+
+- Supports development, staging, and production builds
+- Automatic version increment based on git tags
+- GitHub release creation with changelog
+- APK artifacts available for 30 days
+- Build logs uploaded for troubleshooting
+
+#### Usage
+
+- **Manual**: Go to Actions tab → Select "Build & Auto Release Android APK" → Run workflow
+- **Build Types**: Choose from development, staging, or production
+- **Download**: APK available in GitHub releases section
+
+See `.github/workflows/README.md` for detailed workflow documentation.
+
+### Local APK Building
+
+For local APK builds, you can use the standard React Native build process:
+
+```bash
+# Install dependencies
+yarn install
+
+# Setup Expo
+npx expo prebuild --platform android
+
+# Build APK
+cd android
+./gradlew assembleRelease
+```
+
+### EAS Build
 
 - Pre-configured for [Expo Application Services (EAS)](https://docs.expo.dev/eas/).
 - See `eas.json` for build profiles.
