@@ -135,43 +135,73 @@ const Home = () => {
     (frame) => {
       "worklet";
 
-      frame.render();
+      try {
+        frame.render();
+        poseLandmarks(frame);
 
-      // Process pose landmarks
-      poseLandmarks(frame);
+        if (
+          landmarks?.value !== undefined &&
+          landmarks?.value !== null &&
+          Object.keys(landmarks?.value).length > 0
+        ) {
+          let body = landmarks?.value;
+          let frameWidth = frame.width;
+          let frameHeight = frame.height;
 
-      if (
-        landmarks?.value !== undefined &&
-        Object.keys(landmarks?.value).length > 0
-      ) {
-        let body = landmarks?.value;
-        let frameWidth = frame.width;
-        let frameHeight = frame.height;
+          // Verify we have complete landmark data
+          const keypointCount = Object.keys(body).length;
+          if (keypointCount < 33) {
+            // Not enough keypoints detected yet
+            return;
+          }
 
-        // Draw lines
-        if (showLines) {
-          for (let [from, to] of LINES) {
-            frame.drawLine(
-              body[from].x * Number(frameWidth),
-              body[from].y * Number(frameHeight),
-              body[to].x * Number(frameWidth),
-              body[to].y * Number(frameHeight),
-              linePaint
-            );
+          // Draw lines
+          if (showLines) {
+            for (let [from, to] of LINES) {
+              const fromPoint = body[from];
+              const toPoint = body[to];
+
+              // Skip if either point is invalid
+              if (
+                !fromPoint ||
+                !toPoint ||
+                typeof fromPoint.x !== "number" ||
+                typeof toPoint.x !== "number"
+              ) {
+                continue;
+              }
+
+              frame.drawLine(
+                fromPoint.x * frameWidth,
+                fromPoint.y * frameHeight,
+                toPoint.x * frameWidth,
+                toPoint.y * frameHeight,
+                linePaint
+              );
+            }
+          }
+
+          // Draw circles
+          if (showCircles) {
+            for (let mark of Object.values(body)) {
+              if (
+                mark &&
+                typeof mark.x === "number" &&
+                typeof mark.y === "number"
+              ) {
+                frame.drawCircle(
+                  mark.x * frameWidth,
+                  mark.y * frameHeight,
+                  6,
+                  circlePaint
+                );
+              }
+            }
           }
         }
-
-        // Draw circles
-        if (showCircles) {
-          for (let mark of Object.values(body)) {
-            frame.drawCircle(
-              mark.x * Number(frameWidth),
-              mark.y * Number(frameHeight),
-              6,
-              circlePaint
-            );
-          }
-        }
+      } catch (error) {
+        // Log error but don't crash
+        console.error("Frame processor error:", error);
       }
     },
     [showLines, showCircles]
