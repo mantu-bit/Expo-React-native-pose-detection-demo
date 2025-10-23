@@ -4,8 +4,8 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button, ScreenWrapper } from "@/components";
 import { fonts } from "@/theme";
 import { ms } from "@/utils";
-import { logout } from "@/redux/slices/userSlicer";
 import { useDispatch } from "react-redux";
+import { logout } from "@/redux/actions/authAction";
 
 const Home = () => {
   const { theme } = useUnistyles();
