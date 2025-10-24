@@ -118,7 +118,7 @@ jobs:
           BUILD_TYPE="${{ steps.build_type.outputs.type }}"
           VERSION="${{ steps.version.outputs.next_tag }}"
           OLD_PATH="android/app/build/outputs/apk/release/app-release.apk"
-          NEW_NAME="pose_detection_${BUILD_TYPE}_${VERSION}.apk"
+          NEW_NAME="pose_detection_${VERSION}.apk"
           NEW_PATH="android/app/build/outputs/apk/release/${NEW_NAME}"
 
           mv "$OLD_PATH" "$NEW_PATH"
