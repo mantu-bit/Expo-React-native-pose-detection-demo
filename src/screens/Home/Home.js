@@ -1,5 +1,6 @@
-import { Platform, Text, View } from "react-native";
-import React, { useEffect, useState } from "react";
+// Home.js
+import { Alert, Platform, Text, View } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button } from "@/components";
 import { fonts } from "@/theme";
@@ -12,7 +13,6 @@ import {
   addPoseStatusListener,
   addPoseErrorListener,
 } from "../../../modules/expo-pose-detection";
-
 import {
   Camera,
   useCameraDevice,
@@ -21,6 +21,10 @@ import {
   VisionCameraProxy,
 } from "react-native-vision-camera";
 import { useSharedValue } from "react-native-worklets-core";
+import HumanOutline from "./HumanOutline";
+
+import { isPointInPolygon, mapViewBoxPtsToPixels } from "./geometry";
+import { VIEWBOX_POLY, VIEWBOX_W, VIEWBOX_H } from "./humanOutlinePoly";
 
 const LINES = [
   [0, 1],
@@ -59,15 +63,15 @@ const LINES = [
   [28, 32],
   [30, 32],
 ];
+
 const linePaint = Skia.Paint();
 linePaint.setColor(Skia.Color("red"));
-linePaint.setStrokeWidth(30);
+linePaint.setStrokeWidth(8);
 
 const circlePaint = Skia.Paint();
-circlePaint.setColor(Skia.Color("green"));
-linePaint.setStrokeWidth(10);
+circlePaint.setColor(Skia.Color("cyan"));
+circlePaint.setStrokeWidth(1);
 
-// Initialize the frame processor plugin 'poseLandmarks'
 const poseLandMarkPlugin = VisionCameraProxy.initFrameProcessorPlugin(
   "poseLandmarks",
   {}
@@ -75,11 +79,15 @@ const poseLandMarkPlugin = VisionCameraProxy.initFrameProcessorPlugin(
 
 function poseLandmarks(frame) {
   "worklet";
-  if (poseLandMarkPlugin == null) {
+  if (poseLandMarkPlugin == null)
     throw new Error("Failed to load Frame Processor Plugin!");
-  }
   return poseLandMarkPlugin.call(frame);
 }
+
+const TEST_POINTS = [0, 11, 12, 23, 24, 25, 26, 27, 28, 15, 16];
+const MIN_SCORE = 0.4;
+const COVERAGE_REQ = 0.8;
+const HOLD_FRAMES = 8;
 
 const Home = () => {
   const { theme } = useUnistyles();
@@ -91,35 +99,43 @@ const Home = () => {
   const [cameraPosition, setCameraPosition] = useState("back");
   const [showLines, setShowLines] = useState(true);
   const [showCircles, setShowCircles] = useState(true);
-  const device = useCameraDevice(cameraPosition);
 
-  const pixelFormat =
-    Platform.OS === "ios"
-      ? "rgb" // Force RGB for front camera
-      : "yuv"; // Use YUV for back camera
+  const device = useCameraDevice(cameraPosition);
+  const pixelFormat = Platform.OS === "ios" ? "rgb" : "yuv";
 
   const onPressLogout = () => {
     dispatch(logout());
   };
 
+  // Overlay SVG layout box
+  const [svgBox, setSvgBox] = useState({ x: 0, y: 0, w: 0, h: 0 });
+
+  // Inside state
+  const [insideOk, setInsideOk] = useState(false);
+  const insideCountRef = useRef(0);
+
+  // Polygon mapped to pixels
+  const pixelPoly = useMemo(() => {
+    if (!svgBox.w || !svgBox.h) return [];
+    return mapViewBoxPtsToPixels(
+      VIEWBOX_POLY,
+      VIEWBOX_W,
+      VIEWBOX_H,
+      svgBox.x,
+      svgBox.y,
+      svgBox.w,
+      svgBox.h
+    );
+  }, [svgBox]);
+
   useEffect(() => {
-    // Subscribe to landmarks detected events
     const landmarksSubscription = addPoseLandmarksListener((event) => {
-      console.log("Landmarks detected:", JSON.stringify(event.landmarks[0]));
       landmarks.value = event.landmarks[0];
     });
-
-    // Subscribe to status events
-    const statusSubscription = addPoseStatusListener((event) => {
-      console.log("Status update:", event.status);
-    });
-
-    // Subscribe to error events
+    const statusSubscription = addPoseStatusListener(() => {});
     const errorSubscription = addPoseErrorListener((event) => {
       console.error("Pose detection error:", event.error);
     });
-
-    // Cleanup: Remove all listeners when component unmounts
     return () => {
       landmarksSubscription.remove();
       statusSubscription.remove();
@@ -131,118 +147,148 @@ const Home = () => {
     requestPermission().catch((error) => console.log(error));
   }, [requestPermission]);
 
+  // Frame processor draws and updates landmarks
   const frameProcessor = useSkiaFrameProcessor(
     (frame) => {
       "worklet";
-
       try {
         frame.render();
         poseLandmarks(frame);
 
-        if (
-          landmarks?.value !== undefined &&
-          landmarks?.value !== null &&
-          Object.keys(landmarks?.value).length > 0
-        ) {
-          let body = landmarks?.value;
-          let frameWidth = frame.width;
-          let frameHeight = frame.height;
+        const body = landmarks?.value;
+        if (!body || Object.keys(body).length < 33) return;
 
-          // Verify we have complete landmark data
-          const keypointCount = Object.keys(body).length;
-          if (keypointCount < 33) {
-            // Not enough keypoints detected yet
-            return;
+        const fw = frame.width;
+        const fh = frame.height;
+
+        if (showLines) {
+          for (let [from, to] of LINES) {
+            const a = body[from],
+              b = body[to];
+            if (!a || !b || typeof a.x !== "number" || typeof b.x !== "number")
+              continue;
+            frame.drawLine(a.x * fw, a.y * fh, b.x * fw, b.y * fh, linePaint);
           }
-
-          // Draw lines
-          if (showLines) {
-            for (let [from, to] of LINES) {
-              const fromPoint = body[from];
-              const toPoint = body[to];
-
-              // Skip if either point is invalid
-              if (
-                !fromPoint ||
-                !toPoint ||
-                typeof fromPoint.x !== "number" ||
-                typeof toPoint.x !== "number"
-              ) {
-                continue;
-              }
-
-              frame.drawLine(
-                fromPoint.x * frameWidth,
-                fromPoint.y * frameHeight,
-                toPoint.x * frameWidth,
-                toPoint.y * frameHeight,
-                linePaint
-              );
-            }
-          }
-
-          // Draw circles
-          if (showCircles) {
-            for (let mark of Object.values(body)) {
-              if (
-                mark &&
-                typeof mark.x === "number" &&
-                typeof mark.y === "number"
-              ) {
-                frame.drawCircle(
-                  mark.x * frameWidth,
-                  mark.y * frameHeight,
-                  6,
-                  circlePaint
-                );
-              }
+        }
+        if (showCircles) {
+          for (let kp of Object.values(body)) {
+            if (kp && typeof kp.x === "number" && typeof kp.y === "number") {
+              frame.drawCircle(kp.x * fw, kp.y * fh, 4, circlePaint);
             }
           }
         }
-      } catch (error) {
-        // Log error but don't crash
-        console.error("Frame processor error:", error);
+      } catch (e) {
+        console.error("Frame processor error:", e);
       }
     },
     [showLines, showCircles]
   );
 
-  if (!hasPermission) {
+  // JS-side inclusion test (runs ~each animation frame)
+  useEffect(() => {
+    let raf;
+    const tick = () => {
+      const body = landmarks?.value;
+      if (!pixelPoly.length || !body || Object.keys(body).length < 33) {
+        insideCountRef.current = 0;
+        setInsideOk(false);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      // Camera preview fills the parent; landmarks are normalized 0..1 → pixels
+      // If your preview is letterboxed, offset here accordingly.
+      const frameW = svgBox.w; // align SVG to the same square area we test in
+      const frameH = svgBox.h;
+
+      let tested = 0,
+        inside = 0;
+      for (const idx of TEST_POINTS) {
+        const kp = body[idx];
+        if (
+          !kp ||
+          typeof kp.x !== "number" ||
+          typeof kp.y !== "number" ||
+          kp.score < MIN_SCORE
+        )
+          continue;
+        const p = { x: kp.x * frameW + svgBox.x, y: kp.y * frameH + svgBox.y };
+        tested++;
+        if (isPointInPolygon(p, pixelPoly)) inside++;
+      }
+
+      const ok = tested > 0 && inside / tested >= COVERAGE_REQ;
+      if (ok) {
+        insideCountRef.current++;
+        if (!insideOk && insideCountRef.current >= HOLD_FRAMES) {
+          setInsideOk(true);
+          Alert.alert("Great!", "You’re perfectly inside the frame.");
+        }
+      } else {
+        insideCountRef.current = 0;
+        if (insideOk) setInsideOk(false);
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pixelPoly, svgBox, landmarks, insideOk]);
+
+  if (!hasPermission || !device) {
     return <Text>No permission</Text>;
   }
 
   return (
     <>
       <View style={styles.drawControl}>
-        <Button
-          style={{ width: 120 }}
-          title={showLines ? "Hide lines" : "Show lines"}
+        {/* <Button
+          text={showLines ? "Hide lines" : "Show lines"}
           onPress={() => setShowLines(!showLines)}
         />
         <Button
-          style={{ width: 120 }}
-          title={showCircles ? "Hide circles" : "Show circles"}
+          text={showCircles ? "Hide dots" : "Show dots"}
           onPress={() => setShowCircles(!showCircles)}
-        />
+        /> */}
         <Button
-          style={{ width: 120 }}
-          title="Change camera"
+          title="Flip"
           onPress={() =>
             setCameraPosition((prev) => (prev === "front" ? "back" : "front"))
           }
         />
       </View>
+
       <Camera
-        style={StyleSheet.absoluteFill}
+        style={{ flex: 1 }}
         device={device}
-        isActive={true}
-        frameProcessor={frameProcessor}
+        isActive
         pixelFormat={pixelFormat}
-        videoHdr={false}
-        enableBufferCompression={true}
-        photo={false}
-        // fps={30}
+        frameProcessor={frameProcessor}
       />
+
+      {/* Overlay SVG centered; adjust size as you wish */}
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <View
+          style={{
+            position: "absolute",
+            alignSelf: "center",
+            width: 360,
+            height: 360,
+            top: 140, // adjust vertical position if needed
+          }}
+          onLayout={(e) => {
+            const { x, y, width, height } = e.nativeEvent.layout;
+            setSvgBox({ x, y, w: width, h: height });
+          }}
+        >
+          <HumanOutline
+            width={360}
+            stroke={insideOk ? "#22c55e" : "#FFFFFF"}
+            strokeWidth={insideOk ? 3 : 2}
+            fill="rgba(255,255,255,0.03)"
+          />
+        </View>
+      </View>
     </>
   );
 };
@@ -261,11 +307,4 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     padding: 10,
   },
-  container: {
-    padding: ms(20),
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  title: { fontFamily: fonts.openSan.bold, fontSize: ms(30) },
-  btnStyle: { marginTop: ms(40) },
 }));
