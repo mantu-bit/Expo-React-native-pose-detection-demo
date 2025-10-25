@@ -26,6 +26,8 @@ import HumanOutline from "./HumanOutline";
 import { isPointInPolygon, mapViewBoxPtsToPixels } from "./geometry";
 import { VIEWBOX_POLY, VIEWBOX_W, VIEWBOX_H } from "./humanOutlinePoly";
 
+import * as MediaLibrary from "expo-media-library";
+
 const LINES = [
   [0, 1],
   [0, 4],
@@ -104,6 +106,10 @@ const Home = () => {
   const device = useCameraDevice(cameraPosition);
   const pixelFormat = Platform.OS === "ios" ? "rgb" : "yuv";
 
+  // Inside your Home component, add permission state
+  const [mediaPermission, requestMediaPermission] =
+    MediaLibrary.usePermissions();
+
   const onPressLogout = () => {
     dispatch(logout());
   };
@@ -147,7 +153,11 @@ const Home = () => {
   }, []);
 
   useEffect(() => {
-    requestPermission().catch((error) => console.log(error));
+    requestPermission()
+      .then(() => {
+        requestMediaPermission().catch((error) => console.log(error));
+      })
+      .catch((error) => console.log(error));
   }, [requestPermission]);
 
   // Frame processor draws and updates landmarks
@@ -208,18 +218,32 @@ const Home = () => {
       });
 
       console.log("Photo captured:", photo.path);
-      Alert.alert("Success!", `Photo saved to: ${photo.path}`);
+      console.log("Success!", `Photo saved to: ${photo.path}`);
+      console.log(mediaPermission, "mediaPermission");
+      // Check media library permission
+      if (!mediaPermission?.granted) {
+        const { status } = await requestMediaPermission();
+        if (status !== "granted") {
+          Alert.alert(
+            "Permission Required",
+            "Please grant media library access to save photos"
+          );
+          return;
+        }
+      }
 
-      // TODO: Handle the photo (save, upload, etc.)
-      // You can use photo.path to access the file
+      // Save to gallery
+      const asset = await MediaLibrary.createAssetAsync(photo.path);
+      console.log("Photo saved to gallery:", asset.uri);
+
+      Alert.alert("Success!", "Photo saved to gallery");
     } catch (error) {
-      console.error("Photo capture error:", error);
-      Alert.alert("Error", "Failed to capture photo");
+      console.error("Photo capture/save error:", error);
+      Alert.alert("Error", `Failed to save photo: ${error.message}`);
     } finally {
       isCapturingRef.current = false;
     }
   };
-
   // JS-side inclusion test (runs ~each animation frame)
   useEffect(() => {
     let raf;
