@@ -1,6 +1,9 @@
 name: Build & Auto Release Android APK
 
 on:
+  push:
+    branches:
+      - develop
   workflow_dispatch:
     inputs:
       build_type:
