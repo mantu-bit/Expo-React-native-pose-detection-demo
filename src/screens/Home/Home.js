@@ -88,6 +88,7 @@ const TEST_POINTS = [0, 11, 12, 23, 24, 25, 26, 27, 28, 15, 16];
 const MIN_SCORE = 0.4;
 const COVERAGE_REQ = 0.8;
 const HOLD_FRAMES = 8;
+const CAPTURE_COOLDOWN = 3000; // 3 seconds cooldown between captures
 
 const Home = () => {
   const { theme } = useUnistyles();
@@ -97,9 +98,9 @@ const Home = () => {
   const landmarks = useSharedValue({});
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState("back");
-  const [showLines, setShowLines] = useState(true);
-  const [showCircles, setShowCircles] = useState(true);
-
+  const [showLines, setShowLines] = useState(false);
+  const [showCircles, setShowCircles] = useState(false);
+  const cameraRef = useRef(null);
   const device = useCameraDevice(cameraPosition);
   const pixelFormat = Platform.OS === "ios" ? "rgb" : "yuv";
 
@@ -113,6 +114,8 @@ const Home = () => {
   // Inside state
   const [insideOk, setInsideOk] = useState(false);
   const insideCountRef = useRef(0);
+  const lastCaptureTimeRef = useRef(0); // Track last capture time
+  const isCapturingRef = useRef(false); // Prevent concurrent captures
 
   // Polygon mapped to pixels
   const pixelPoly = useMemo(() => {
@@ -184,6 +187,39 @@ const Home = () => {
     [showLines, showCircles]
   );
 
+  // Function to capture photo
+  const capturePhoto = async () => {
+    if (!cameraRef.current || isCapturingRef.current) return;
+
+    const now = Date.now();
+    if (now - lastCaptureTimeRef.current < CAPTURE_COOLDOWN) {
+      console.log("Cooldown active, skipping capture");
+      return;
+    }
+
+    try {
+      isCapturingRef.current = true;
+      lastCaptureTimeRef.current = now;
+
+      const photo = await cameraRef.current.takePhoto({
+        qualityPrioritization: "balanced",
+        flash: "off",
+        enableShutterSound: true,
+      });
+
+      console.log("Photo captured:", photo.path);
+      Alert.alert("Success!", `Photo saved to: ${photo.path}`);
+
+      // TODO: Handle the photo (save, upload, etc.)
+      // You can use photo.path to access the file
+    } catch (error) {
+      console.error("Photo capture error:", error);
+      Alert.alert("Error", "Failed to capture photo");
+    } finally {
+      isCapturingRef.current = false;
+    }
+  };
+
   // JS-side inclusion test (runs ~each animation frame)
   useEffect(() => {
     let raf;
@@ -197,8 +233,7 @@ const Home = () => {
       }
 
       // Camera preview fills the parent; landmarks are normalized 0..1 → pixels
-      // If your preview is letterboxed, offset here accordingly.
-      const frameW = svgBox.w; // align SVG to the same square area we test in
+      const frameW = svgBox.w;
       const frameH = svgBox.h;
 
       let tested = 0,
@@ -222,7 +257,7 @@ const Home = () => {
         insideCountRef.current++;
         if (!insideOk && insideCountRef.current >= HOLD_FRAMES) {
           setInsideOk(true);
-          Alert.alert("Great!", "You’re perfectly inside the frame.");
+          capturePhoto(); // Trigger photo capture
         }
       } else {
         insideCountRef.current = 0;
@@ -259,14 +294,16 @@ const Home = () => {
       </View>
 
       <Camera
+        ref={cameraRef}
         style={{ flex: 1 }}
         device={device}
         isActive
+        photo={true} // ✅ Enable photo capture
         pixelFormat={pixelFormat}
         frameProcessor={frameProcessor}
       />
 
-      {/* Overlay SVG centered; adjust size as you wish */}
+      {/* Overlay SVG centered */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         <View
           style={{
@@ -274,7 +311,7 @@ const Home = () => {
             alignSelf: "center",
             width: 360,
             height: 360,
-            top: 140, // adjust vertical position if needed
+            top: 140,
           }}
           onLayout={(e) => {
             const { x, y, width, height } = e.nativeEvent.layout;
