@@ -3,49 +3,46 @@ import React from "react";
 import { View, StyleSheet, Dimensions } from "react-native";
 import Svg, { Path, G } from "react-native-svg";
 
-const { width: screenWidth } = Dimensions.get("window");
+const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
 
 export default function HumanOutline({
-  width = Math.min(screenWidth * 0.9, 360),
+  width = Math.min(screenWidth * 0.5, 360),
   stroke = "#FFFFFF",
   strokeWidth = 2,
   fill = "rgba(255,255,255,0.04)",
   vectorEffect = "non-scaling-stroke",
   style,
 }) {
-  // Original SVG viewBox is square; keep 1:1
-  const height = width;
+  const height = screenHeight * 0.5;
 
   return (
     <View style={[styles.container, style, { width, height }]}>
       <Svg
         width="100%"
         height="100%"
-        viewBox="0 0 206.326 206.326"
+        // ✅ Cropped viewBox to human figure only
+        viewBox="50 0 80 206"
         preserveAspectRatio="xMidYMid meet"
       >
         <G>
-          <G>
-            {/* Inner translucent fill */}
-            <Path d={PATH} fill={fill} />
-            {/* Outline */}
-            <Path
-              d={PATH}
-              fill="none"
-              stroke={stroke}
-              strokeWidth={strokeWidth}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect={vectorEffect}
-            />
-          </G>
+          {/* Inner translucent fill */}
+          <Path d={PATH} fill={fill} />
+          {/* Outline */}
+          <Path
+            d={PATH}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect={vectorEffect}
+          />
         </G>
       </Svg>
     </View>
   );
 }
 
-// NOTE: unchanged path data
 const PATH = `M104.265,117.959c-0.304,3.58,2.126,22.529,3.38,29.959c0.597,3.52,2.234,9.255,1.645,12.3
 c-0.841,4.244-1.084,9.736-0.621,12.934c0.292,1.942,1.211,10.899-0.104,14.175c-0.688,1.718-1.949,10.522-1.949,10.522
 c-3.285,8.294-1.431,7.886-1.431,7.886c1.017,1.248,2.759,0.098,2.759,0.098c1.327,0.846,2.246-0.201,2.246-0.201
