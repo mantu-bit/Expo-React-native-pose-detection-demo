@@ -1,5 +1,4 @@
-// Home.fixed.js — drop-in replacement
-
+// Home.js - WITH STABLE ORIENTATION DETECTION
 import { Alert, Platform, Text, View } from "react-native";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -23,14 +22,11 @@ import {
 } from "react-native-vision-camera";
 import { useSharedValue } from "react-native-worklets-core";
 import HumanOutline from "./HumanOutline";
-
 import { isPointInPolygon, mapViewBoxPtsToPixels } from "./geometry";
 import { VIEWBOX_POLY, VIEWBOX_W, VIEWBOX_H } from "./humanOutlinePoly";
-
 import * as MediaLibrary from "expo-media-library";
 
 /* ---------- One-Euro temporal smoothing (adaptive low-pass) ---------- */
-// Ref: 1€ filter balances jitter vs lag for real-time keypoints.
 class LowPass {
   y = null;
   filter(x, a) {
@@ -73,13 +69,24 @@ const subtract = (a, b) => ({
   y: a.y - b.y,
   z: (a.z ?? 0) - (b.z ?? 0),
 });
-const angleDeg = (u, v) => {
-  const mu = mag(u);
-  const mv = mag(v);
-  if (mu === 0 || mv === 0) return 90;
-  let cosTheta = dot(u, v) / (mu * mv);
-  cosTheta = Math.max(-1, Math.min(1, cosTheta));
-  return Math.acos(cosTheta) * (180 / Math.PI);
+
+/* ---------- Calculate angle between 3 points ---------- */
+const calculateAngle = (point1, point2, point3) => {
+  const vector1 = {
+    x: point1.x - point2.x,
+    y: point1.y - point2.y,
+  };
+  const vector2 = {
+    x: point3.x - point2.x,
+    y: point3.y - point2.y,
+  };
+  const angle1 = Math.atan2(vector1.y, vector1.x);
+  const angle2 = Math.atan2(vector2.y, vector2.x);
+  let angleDegrees = Math.abs((angle1 - angle2) * (180 / Math.PI));
+  if (angleDegrees > 180) {
+    angleDegrees = 360 - angleDegrees;
+  }
+  return angleDegrees;
 };
 
 const getVisibility = (p) => {
@@ -106,174 +113,298 @@ const normalizeBodyArray = (body) => {
   return arr;
 };
 
-/* ---------- Standing/facing thresholds + hysteresis ---------- */
-const KNEE_MIN = 165; // ~full extension
-const TORSO_MAX = 20; // near-vertical torso
-const SPAN_MIN = 0.2; // weak height check
-const STATE_HOLD = 10; // frames to confirm ON
-const STATE_DROP = 6; // frames to confirm OFF
-const DEPTH_SIDE_DELTA = 0.05; // world/image z diff threshold
+/* ---------- CORE DETECTION LOGIC ---------- */
+const MIN_VIS = 0.5;
+const LEG_ANGLE_MIN = 160;
+const SHOULDER_DIST_FRONT = 0.08;
+const SHOULDER_DIST_SIDE = 0.06;
+const DEPTH_THRESHOLD = 0.02;
 
-/* ---------- Pose state ---------- */
-const detectPoseState = (rawBody, setMetrics) => {
-  const body = normalizeBodyArray(rawBody);
-  if (!body) {
-    setMetrics((m) => ({
-      ...m,
-      heightSpan: 0,
-      lKneeAngle: 0,
-      rKneeAngle: 0,
-      torsoAngle: 0,
-      earVisAvg: 0,
-      eyeVisAvg: 0,
-      noseVis: 0,
-      hipVisAvg: 0,
-      shoulderZDiff: 0,
-      hipZDiff: 0,
-      lEarVis: 0,
-      rEarVis: 0,
-      lShoulderZ: 0,
-      rShoulderZ: 0,
-      standing: false,
-      facing: "unknown",
-      facingConfidence: 0,
-      reason: "",
-    }));
-    return { standing: false, standingRaw: false, facing: "unknown" };
+/* Standing detection - WORKING VERSION */
+const isStanding = (landmarks) => {
+  if (!landmarks || landmarks.length < 33)
+    return { standing: false, details: {} };
+
+  const leftHip = landmarks[23];
+  const leftKnee = landmarks[25];
+  const leftAnkle = landmarks[27];
+  const rightHip = landmarks[24];
+  const rightKnee = landmarks[26];
+  const rightAnkle = landmarks[28];
+  const leftShoulder = landmarks[11];
+  const rightShoulder = landmarks[12];
+  const nose = landmarks[0];
+
+  const keyPointsVisible = [
+    leftHip,
+    leftKnee,
+    leftAnkle,
+    rightHip,
+    rightKnee,
+    rightAnkle,
+    leftShoulder,
+    rightShoulder,
+  ].every((p) => p && getVisibility(p) > MIN_VIS);
+
+  if (!keyPointsVisible) {
+    return { standing: false, details: { reason: "Low visibility" } };
   }
 
-  const idx = {
-    nose: 0,
-    leftEyeInner: 1,
-    leftEye: 2,
-    rightEye: 4,
-    rightEyeOuter: 5,
-    leftEar: 7,
-    rightEar: 8,
-    lShoulder: 11,
-    rShoulder: 12,
-    lHip: 23,
-    rHip: 24,
-    lKnee: 25,
-    rKnee: 26,
-    lAnkle: 27,
-    rAnkle: 28,
+  const leftLegAngle = calculateAngle(leftHip, leftKnee, leftAnkle);
+  const rightLegAngle = calculateAngle(rightHip, rightKnee, rightAnkle);
+
+  const legsStrait =
+    leftLegAngle >= LEG_ANGLE_MIN && rightLegAngle >= LEG_ANGLE_MIN;
+
+  if (!legsStrait) {
+    return {
+      standing: false,
+      details: {
+        reason: "Legs not straight",
+        leftLegAngle: leftLegAngle.toFixed(1),
+        rightLegAngle: rightLegAngle.toFixed(1),
+        legsStrait: false,
+      },
+    };
+  }
+
+  const headCandidates = [nose?.y, leftShoulder.y, rightShoulder.y].filter(
+    (y) => y != null
+  );
+  const headY =
+    headCandidates.length > 0
+      ? Math.min(...headCandidates)
+      : Math.min(leftShoulder.y, rightShoulder.y);
+  const feetY = Math.max(leftAnkle.y, rightAnkle.y);
+  const heightSpan = Math.abs(feetY - headY);
+
+  const veryStraitLegs = leftLegAngle >= 170 && rightLegAngle >= 170;
+  const relaxedHeightCheck = veryStraitLegs
+    ? heightSpan > 0.15
+    : heightSpan > 0.25;
+
+  if (veryStraitLegs && relaxedHeightCheck) {
+    return {
+      standing: true,
+      details: {
+        leftLegAngle: leftLegAngle.toFixed(1),
+        rightLegAngle: rightLegAngle.toFixed(1),
+        legsStrait: true,
+        veryStraitLegs: true,
+        heightSpan: heightSpan.toFixed(2),
+        tallEnough: true,
+        bypassedVerticalCheck: true,
+        reason: "Very straight legs - STANDING",
+      },
+    };
+  }
+
+  const MARGIN = 0.08;
+  const leftKneeInMiddle =
+    leftKnee.y > leftHip.y - MARGIN && leftKnee.y < leftAnkle.y + MARGIN;
+  const rightKneeInMiddle =
+    rightKnee.y > rightHip.y - MARGIN && rightKnee.y < rightAnkle.y + MARGIN;
+  const generalVerticalOk = leftKneeInMiddle || rightKneeInMiddle;
+
+  const standing = legsStrait && relaxedHeightCheck && generalVerticalOk;
+
+  return {
+    standing,
+    details: {
+      leftLegAngle: leftLegAngle.toFixed(1),
+      rightLegAngle: rightLegAngle.toFixed(1),
+      legsStrait,
+      veryStraitLegs,
+      leftKneeInMiddle,
+      rightKneeInMiddle,
+      generalVerticalOk,
+      heightSpan: heightSpan.toFixed(2),
+      tallEnough: relaxedHeightCheck,
+      bypassedVerticalCheck: false,
+      reason: standing
+        ? "All checks passed"
+        : `Failed: height=${relaxedHeightCheck}, vertical=${generalVerticalOk}`,
+    },
   };
+};
 
-  const p = (i) => body[i] ?? { x: 0, y: 0, z: 0, visibility: 0 };
-  const nose = p(idx.nose);
-  const lEar = p(idx.leftEar);
-  const rEar = p(idx.rightEar);
-  const lShoulder = p(idx.lShoulder);
-  const rShoulder = p(idx.rShoulder);
-  const lHip = p(idx.lHip);
-  const rHip = p(idx.rHip);
-  const lKnee = p(idx.lKnee);
-  const rKnee = p(idx.rKnee);
-  const lAnkle = p(idx.lAnkle);
-  const rAnkle = p(idx.rAnkle);
-  const leftEyeInner = p(idx.leftEyeInner);
-  const leftEye = p(idx.leftEye);
-  const rightEye = p(idx.rightEye);
-  const rightEyeOuter = p(idx.rightEyeOuter);
+/* Orientation detection - STABILIZED VERSION */
+const detectOrientation = (landmarks) => {
+  if (!landmarks || landmarks.length < 33) {
+    return { orientation: "unknown", confidence: 0, details: {} };
+  }
 
-  const avgAnkleY = (lAnkle.y + rAnkle.y) / 2;
-  const heightSpan = avgAnkleY - nose.y;
+  const leftShoulder = landmarks[11];
+  const rightShoulder = landmarks[12];
+  const leftHip = landmarks[23];
+  const rightHip = landmarks[24];
+  const leftEar = landmarks[7];
+  const rightEar = landmarks[8];
+  const nose = landmarks[0];
 
-  const lKneeAngle = angleDeg(subtract(lHip, lKnee), subtract(lAnkle, lKnee));
-  const rKneeAngle = angleDeg(subtract(rHip, rKnee), subtract(rAnkle, rKnee));
+  if (
+    [leftShoulder, rightShoulder, leftHip, rightHip].some(
+      (p) => !p || getVisibility(p) < 0.4
+    )
+  ) {
+    return {
+      orientation: "unknown",
+      confidence: 0,
+      details: { reason: "Low visibility" },
+    };
+  }
 
-  const hipMid = {
-    x: (lHip.x + rHip.x) / 2,
-    y: (lHip.y + rHip.y) / 2,
-    z: ((lHip.z ?? 0) + (rHip.z ?? 0)) / 2,
-  };
-  const shoulderMid = {
-    x: (lShoulder.x + rShoulder.x) / 2,
-    y: (lShoulder.y + rShoulder.y) / 2,
-    z: ((lShoulder.z ?? 0) + (rShoulder.z ?? 0)) / 2,
-  };
-  const torsoVec = subtract(shoulderMid, hipMid);
-  const verticalVec = { x: 0, y: -1, z: 0 };
-  const torsoAngle = angleDeg(torsoVec, verticalVec);
-
+  const shoulderDistance = Math.abs(leftShoulder.x - rightShoulder.x);
+  const hipDistance = Math.abs(leftHip.x - rightHip.x);
+  const leftVisibility =
+    (getVisibility(leftShoulder) + getVisibility(leftHip)) / 2;
+  const rightVisibility =
+    (getVisibility(rightShoulder) + getVisibility(rightHip)) / 2;
+  const leftEarVis = getVisibility(leftEar);
+  const rightEarVis = getVisibility(rightEar);
   const noseVis = getVisibility(nose);
-  const lEarVis = getVisibility(lEar);
-  const rEarVis = getVisibility(rEar);
-  const earVisAvg = (lEarVis + rEarVis) / 2;
-  const eyeVisAvg =
-    (getVisibility(leftEyeInner) +
-      getVisibility(leftEye) +
-      getVisibility(rightEye) +
-      getVisibility(rightEyeOuter)) /
-    4;
-  const shoulderZDiff = (lShoulder.z ?? 0) - (rShoulder.z ?? 0);
-  const hipZDiff = Math.abs((lHip.z ?? 0) - (rHip.z ?? 0));
-  const hipVisAvg = (getVisibility(lHip) + getVisibility(rHip)) / 2;
-  const lShoulderZ = lShoulder.z ?? 0;
-  const rShoulderZ = rShoulder.z ?? 0;
+  const shoulderZDiff = (leftShoulder.z ?? 0) - (rightShoulder.z ?? 0);
+  const hipZDiff = (leftHip.z ?? 0) - (rightHip.z ?? 0);
+  const avgZDiff = (shoulderZDiff + hipZDiff) / 2;
 
-  const isStandingRaw =
-    heightSpan > SPAN_MIN &&
-    lKneeAngle > KNEE_MIN &&
-    rKneeAngle > KNEE_MIN &&
-    torsoAngle < TORSO_MAX;
-
-  // Facing by depth symmetry first; visibility is only a soft cue
-  let facing = "unknown";
+  let orientation = "unknown";
   let confidence = 0;
   let reason = "";
 
-  const absSh = Math.abs(shoulderZDiff);
-  if (
-    absSh < DEPTH_SIDE_DELTA &&
-    hipZDiff < DEPTH_SIDE_DELTA &&
-    (earVisAvg > 0.4 || eyeVisAvg > 0.4)
-  ) {
-    facing = "front";
-    confidence = 0.9;
-    reason = "symmetric depth";
-  } else if (shoulderZDiff > DEPTH_SIDE_DELTA) {
-    // left shoulder farther (z less negative) → turning right wrt camera
-    facing = "right";
-    confidence = 0.8;
-    reason = "left shoulder deeper";
-  } else if (shoulderZDiff < -DEPTH_SIDE_DELTA) {
-    facing = "left";
-    confidence = 0.8;
-    reason = "right shoulder deeper";
+  // SLIGHTLY STRICTER thresholds for stability
+  const FRONT_SHOULDER_MIN = 0.1; // Increased from 0.08
+  const SIDE_SHOULDER_MAX = 0.07; // Increased from 0.06
+  const DEPTH_MIN = 0.02; // Increased from 0.015
+  const VIS_DIFF_MIN = 0.1; // Increased from 0.08
+
+  const isFrontByDistance =
+    shoulderDistance > FRONT_SHOULDER_MIN &&
+    hipDistance > FRONT_SHOULDER_MIN * 0.7;
+  const isFrontBySymmetry = Math.abs(leftVisibility - rightVisibility) < 0.12;
+  const isFrontByDepth = Math.abs(avgZDiff) < DEPTH_MIN;
+  const isFrontByFace =
+    noseVis > 0.5 && (leftEarVis > 0.3 || rightEarVis > 0.3);
+
+  const frontScore =
+    (isFrontByDistance ? 1 : 0) +
+    (isFrontBySymmetry ? 1 : 0) +
+    (isFrontByDepth ? 1 : 0) +
+    (isFrontByFace ? 1 : 0);
+
+  if (frontScore >= 3) {
+    orientation = "front";
+    confidence = 0.88 + frontScore * 0.03;
+    reason = `Front indicators: ${frontScore}/4`;
   } else if (
-    (earVisAvg < 0.35 || eyeVisAvg < 0.35 || noseVis < 0.35) &&
-    torsoAngle > 25 &&
-    hipVisAvg > 0.5
+    shoulderDistance < SIDE_SHOULDER_MAX &&
+    (avgZDiff > DEPTH_MIN || rightVisibility > leftVisibility + VIS_DIFF_MIN)
   ) {
-    facing = "back";
+    orientation = "left";
+    confidence = 0.82 + Math.min(0.12, Math.abs(avgZDiff) * 5);
+    reason = "Right side prominent (left facing)";
+  } else if (
+    shoulderDistance < SIDE_SHOULDER_MAX &&
+    (avgZDiff < -DEPTH_MIN || leftVisibility > rightVisibility + VIS_DIFF_MIN)
+  ) {
+    orientation = "right";
+    confidence = 0.82 + Math.min(0.12, Math.abs(avgZDiff) * 5);
+    reason = "Left side prominent (right facing)";
+  } else if (
+    Math.abs(leftVisibility - rightVisibility) < 0.15 &&
+    noseVis > 0.4
+  ) {
+    orientation = "front";
     confidence = 0.7;
-    reason = "low face vis + torso tilt";
+    reason = "Symmetric visibility + face visible (fallback)";
+  } else if (rightVisibility > leftVisibility + 0.15) {
+    orientation = "left";
+    confidence = 0.68;
+    reason = "Right more visible (fallback)";
+  } else if (leftVisibility > rightVisibility + 0.15) {
+    orientation = "right";
+    confidence = 0.68;
+    reason = "Left more visible (fallback)";
   }
 
+  return {
+    orientation,
+    confidence,
+    details: {
+      shoulderDistance: shoulderDistance.toFixed(3),
+      hipDistance: hipDistance.toFixed(3),
+      leftVisibility: leftVisibility.toFixed(2),
+      rightVisibility: rightVisibility.toFixed(2),
+      shoulderZDiff: shoulderZDiff.toFixed(3),
+      hipZDiff: hipZDiff.toFixed(3),
+      avgZDiff: avgZDiff.toFixed(3),
+      noseVis: noseVis.toFixed(2),
+      leftEarVis: leftEarVis.toFixed(2),
+      rightEarVis: rightEarVis.toFixed(2),
+      frontScore,
+      isFrontByDistance,
+      isFrontBySymmetry,
+      isFrontByDepth,
+      isFrontByFace,
+      reason,
+    },
+  };
+};
+
+/* Main detection function */
+const detectStandingPose = (rawBody, setMetrics) => {
+  const body = normalizeBodyArray(rawBody);
+
+  if (!body) {
+    setMetrics({
+      standing: false,
+      orientation: "unknown",
+      confidence: 0,
+      standingDetails: {},
+      orientationDetails: {},
+    });
+    return {
+      pose: "NOT_DETECTED",
+      orientation: "unknown",
+      confidence: 0,
+    };
+  }
+
+  const standingResult = isStanding(body);
+
+  if (!standingResult.standing) {
+    setMetrics({
+      standing: false,
+      orientation: "unknown",
+      confidence: 0,
+      standingDetails: standingResult.details,
+      orientationDetails: {},
+    });
+    return {
+      pose: "NOT_STANDING",
+      orientation: "unknown",
+      confidence: 0,
+      standingDetails: standingResult.details,
+    };
+  }
+
+  const orientationResult = detectOrientation(body);
+  const overallConfidence = orientationResult.confidence;
+
   setMetrics({
-    heightSpan: Number(heightSpan.toFixed(2)),
-    lKneeAngle: Number(lKneeAngle.toFixed(1)),
-    rKneeAngle: Number(rKneeAngle.toFixed(1)),
-    torsoAngle: Number(torsoAngle.toFixed(1)),
-    earVisAvg: Number(earVisAvg.toFixed(2)),
-    eyeVisAvg: Number(eyeVisAvg.toFixed(2)),
-    noseVis: Number(noseVis.toFixed(2)),
-    hipVisAvg: Number(hipVisAvg.toFixed(2)),
-    shoulderZDiff: Number(Math.abs(shoulderZDiff).toFixed(3)),
-    hipZDiff: Number(hipZDiff.toFixed(3)),
-    lEarVis: Number(lEarVis.toFixed(2)),
-    rEarVis: Number(rEarVis.toFixed(2)),
-    lShoulderZ: Number(lShoulderZ.toFixed(3)),
-    rShoulderZ: Number(rShoulderZ.toFixed(3)),
-    standing: isStandingRaw,
-    facing: facing,
-    facingConfidence: Number((confidence * 100).toFixed(0)),
-    reason: reason,
+    standing: true,
+    orientation: orientationResult.orientation,
+    confidence: (overallConfidence * 100).toFixed(0),
+    standingDetails: standingResult.details,
+    orientationDetails: orientationResult.details,
   });
 
-  return { standing: isStandingRaw, standingRaw: isStandingRaw, facing };
+  return {
+    pose: "STANDING",
+    orientation: orientationResult.orientation,
+    confidence: overallConfidence,
+    standingDetails: standingResult.details,
+    orientationDetails: orientationResult.details,
+  };
 };
 
 /* ---------- Drawing assets ---------- */
@@ -332,12 +463,12 @@ function poseLandmarks(frame) {
   return poseLandMarkPlugin.call(frame);
 }
 
-/* ---------- Config ---------- */
 const TEST_POINTS = [0, 11, 12, 23, 24, 25, 26, 27, 28, 15, 16];
 const MIN_SCORE = 0.4;
-const COVERAGE_REQ = 0.8;
-const HOLD_FRAMES = 8;
+const COVERAGE_REQ = 0.75;
+const HOLD_FRAMES = 25; // INCREASED from 15 to 25 for more stability
 const CAPTURE_COOLDOWN = 3000;
+const ORIENTATION_STABILITY_FRAMES = 8; // NEW: Must hold orientation for 8 frames
 
 const Home = () => {
   const { theme } = useUnistyles();
@@ -356,52 +487,42 @@ const Home = () => {
   const [mediaPermission, requestMediaPermission] =
     MediaLibrary.usePermissions();
 
-  // Standing/facing stable states
-  const [isStanding, setIsStanding] = useState(false);
-  const [facing, setFacing] = useState("unknown");
-
-  // Hysteresis counters
-  const standOn = useRef(0);
-  const standOff = useRef(0);
-  const facingCandidate = useRef("unknown");
-  const facingCandCount = useRef(0);
-  const facingOffCount = useRef(0);
-
-  // Metrics display
-  const [metrics, setMetrics] = useState({
-    heightSpan: 0,
-    lKneeAngle: 0,
-    rKneeAngle: 0,
-    torsoAngle: 0,
-    earVisAvg: 0,
-    eyeVisAvg: 0,
-    noseVis: 0,
-    hipVisAvg: 0,
-    shoulderZDiff: 0,
-    hipZDiff: 0,
-    lEarVis: 0,
-    rEarVis: 0,
-    lShoulderZ: 0,
-    rShoulderZ: 0,
+  const [detectionState, setDetectionState] = useState({
     standing: false,
-    facing: "unknown",
-    facingConfidence: 0,
-    reason: "",
+    orientation: "unknown",
+    confidence: 0,
   });
 
-  // In-frame coverage
-  const [inFrameCoverage, setInFrameCoverage] = useState(0);
+  const holdCountRef = useRef({
+    front: 0,
+    left: 0,
+    right: 0,
+  });
 
-  // Overlay SVG layout box
-  const [svgBox, setSvgBox] = useState({ x: 0, y: 0, w: 0, h: 0 });
+  const capturedPosesRef = useRef({
+    front: false,
+    left: false,
+    right: false,
+  });
 
-  // Inside state and capture gating
-  const [insideOk, setInsideOk] = useState(false);
-  const insideCountRef = useRef(0);
   const lastCaptureTimeRef = useRef(0);
   const isCapturingRef = useRef(false);
 
-  // Polygon mapped to pixels
+  // NEW: Orientation stability tracking
+  const orientationHistoryRef = useRef([]);
+  const stableOrientationRef = useRef("unknown");
+
+  const [metrics, setMetrics] = useState({
+    standing: false,
+    orientation: "unknown",
+    confidence: 0,
+    standingDetails: {},
+    orientationDetails: {},
+  });
+
+  const [inFrameCoverage, setInFrameCoverage] = useState(0);
+  const [svgBox, setSvgBox] = useState({ x: 0, y: 0, w: 0, h: 0 });
+
   const pixelPoly = useMemo(() => {
     if (!svgBox.w || !svgBox.h) return [];
     return mapViewBoxPtsToPixels(
@@ -438,7 +559,197 @@ const Home = () => {
       .catch((e) => console.log(e));
   }, [requestPermission]);
 
-  /* ---------- Frame processor: draws raw (unsmoothed) for speed ---------- */
+  const capturePhoto = async (poseType) => {
+    if (!cameraRef.current || isCapturingRef.current) return;
+    const now = Date.now();
+    if (now - lastCaptureTimeRef.current < CAPTURE_COOLDOWN) return;
+
+    if (capturedPosesRef.current[poseType]) {
+      console.log(`${poseType} pose already captured, skipping...`);
+      return;
+    }
+
+    try {
+      isCapturingRef.current = true;
+      lastCaptureTimeRef.current = now;
+      const photo = await cameraRef.current.takePhoto({
+        qualityPrioritization: "balanced",
+        flash: "off",
+        enableShutterSound: true,
+      });
+      if (!mediaPermission?.granted) {
+        const { status } = await requestMediaPermission();
+        if (status !== "granted") {
+          Alert.alert(
+            "Permission Required",
+            "Please grant media library access to save photos"
+          );
+          return;
+        }
+      }
+      await MediaLibrary.createAssetAsync(photo.path);
+
+      capturedPosesRef.current[poseType] = true;
+
+      Alert.alert(
+        "Success!",
+        `${poseType.toUpperCase()} pose photo saved to gallery`
+      );
+
+      const allCaptured =
+        capturedPosesRef.current.front &&
+        capturedPosesRef.current.left &&
+        capturedPosesRef.current.right;
+
+      if (allCaptured) {
+        Alert.alert("Complete!", "All three poses captured successfully!");
+      }
+    } catch (error) {
+      console.error("Photo capture/save error:", error);
+      Alert.alert("Error", `Failed to save photo: ${error?.message ?? error}`);
+    } finally {
+      isCapturingRef.current = false;
+    }
+  };
+
+  const filtersRef = useRef({});
+  const smoothBody = (body) => {
+    const t = Date.now();
+    return body.map((kp, i) => {
+      if (!kp || typeof kp.x !== "number" || typeof kp.y !== "number")
+        return kp;
+      if (!filtersRef.current[i]) {
+        filtersRef.current[i] = {
+          x: new OneEuro({ minCutoff: 1.0, beta: 0.02 }),
+          y: new OneEuro({ minCutoff: 1.0, beta: 0.02 }),
+          z: new OneEuro({ minCutoff: 1.0, beta: 0.02 }),
+        };
+      }
+      const f = filtersRef.current[i];
+      return {
+        ...kp,
+        x: f.x.filter(kp.x, t),
+        y: f.y.filter(kp.y, t),
+        z: typeof kp.z === "number" ? f.z.filter(kp.z, t) : kp.z,
+      };
+    });
+  };
+
+  useEffect(() => {
+    let raf;
+    const tick = () => {
+      const bodyRaw = landmarks?.value;
+      const bodyNorm = normalizeBodyArray(bodyRaw);
+      const body = bodyNorm ? smoothBody(bodyNorm) : null;
+
+      if (!pixelPoly.length || !body) {
+        holdCountRef.current = { front: 0, left: 0, right: 0 };
+        orientationHistoryRef.current = [];
+        stableOrientationRef.current = "unknown";
+        setInFrameCoverage(0);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      const frameW = svgBox.w,
+        frameH = svgBox.h;
+      let tested = 0,
+        inside = 0;
+      for (const idx of TEST_POINTS) {
+        const kp = body[idx];
+        if (
+          !kp ||
+          typeof kp.x !== "number" ||
+          typeof kp.y !== "number" ||
+          getVisibility(kp) < MIN_SCORE
+        )
+          continue;
+        const normX = cameraPosition === "front" ? 1 - kp.x : kp.x;
+        const p = { x: normX * frameW + svgBox.x, y: kp.y * frameH + svgBox.y };
+        tested++;
+        if (isPointInPolygon(p, pixelPoly)) inside++;
+      }
+      const inFrameOk = tested > 0 && inside / tested >= COVERAGE_REQ;
+      const coverage = tested > 0 ? ((inside / tested) * 100).toFixed(1) : 0;
+      setInFrameCoverage(parseFloat(coverage));
+
+      const result = detectStandingPose(body, setMetrics);
+
+      // NEW: Orientation stability logic
+      if (result.pose === "STANDING" && result.orientation !== "unknown") {
+        // Add to history
+        orientationHistoryRef.current.push(result.orientation);
+
+        // Keep only last ORIENTATION_STABILITY_FRAMES entries
+        if (
+          orientationHistoryRef.current.length > ORIENTATION_STABILITY_FRAMES
+        ) {
+          orientationHistoryRef.current.shift();
+        }
+
+        // Check if all recent frames agree
+        if (
+          orientationHistoryRef.current.length >= ORIENTATION_STABILITY_FRAMES
+        ) {
+          const allSame = orientationHistoryRef.current.every(
+            (o) => o === orientationHistoryRef.current[0]
+          );
+
+          if (allSame) {
+            stableOrientationRef.current = orientationHistoryRef.current[0];
+          }
+        }
+      } else {
+        // Reset if not standing or orientation unknown
+        orientationHistoryRef.current = [];
+        stableOrientationRef.current = "unknown";
+      }
+
+      // Use stable orientation for state
+      const finalOrientation = stableOrientationRef.current;
+
+      setDetectionState({
+        standing: result.pose === "STANDING",
+        orientation: finalOrientation,
+        confidence: result.confidence,
+      });
+
+      // Capture logic uses stable orientation
+      if (
+        result.pose === "STANDING" &&
+        finalOrientation !== "unknown" &&
+        result.confidence > 0.7 && // Slightly increased threshold
+        inFrameOk
+      ) {
+        const orientation = finalOrientation;
+
+        holdCountRef.current[orientation]++;
+
+        Object.keys(holdCountRef.current).forEach((key) => {
+          if (key !== orientation) {
+            holdCountRef.current[key] = 0;
+          }
+        });
+
+        if (holdCountRef.current[orientation] >= HOLD_FRAMES) {
+          if (!capturedPosesRef.current[orientation]) {
+            console.log(
+              `Capturing ${orientation} pose (held for ${holdCountRef.current[orientation]} frames)...`
+            );
+            capturePhoto(orientation);
+          }
+          holdCountRef.current[orientation] = 0;
+        }
+      } else {
+        holdCountRef.current = { front: 0, left: 0, right: 0 };
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pixelPoly, svgBox, cameraPosition]);
+
   const frameProcessor = useSkiaFrameProcessor(
     (frame) => {
       "worklet";
@@ -473,201 +784,41 @@ const Home = () => {
     [showLines, showCircles]
   );
 
-  // Photo capture
-  const capturePhoto = async () => {
-    if (!cameraRef.current || isCapturingRef.current) return;
-    const now = Date.now();
-    if (now - lastCaptureTimeRef.current < CAPTURE_COOLDOWN) return;
-    try {
-      isCapturingRef.current = true;
-      lastCaptureTimeRef.current = now;
-      const photo = await cameraRef.current.takePhoto({
-        qualityPrioritization: "balanced",
-        flash: "off",
-        enableShutterSound: true,
-        // Leave mirroring default; preview is mirrored on selfie, outputs can be controlled separately if desired.
-      });
-      if (!mediaPermission?.granted) {
-        const { status } = await requestMediaPermission();
-        if (status !== "granted") {
-          Alert.alert(
-            "Permission Required",
-            "Please grant media library access to save photos"
-          );
-          return;
-        }
-      }
-      const asset = await MediaLibrary.createAssetAsync(photo.path);
-      Alert.alert("Success!", "Photo saved to gallery");
-    } catch (error) {
-      console.error("Photo capture/save error:", error);
-      Alert.alert("Error", `Failed to save photo: ${error?.message ?? error}`);
-    } finally {
-      isCapturingRef.current = false;
-    }
-  };
-
-  /* ---------- One-Euro filters per landmark axis ---------- */
-  const filtersRef = useRef({});
-  const smoothBody = (body) => {
-    const t = Date.now();
-    return body.map((kp, i) => {
-      if (!kp || typeof kp.x !== "number" || typeof kp.y !== "number")
-        return kp;
-      if (!filtersRef.current[i]) {
-        filtersRef.current[i] = {
-          x: new OneEuro({ minCutoff: 1.0, beta: 0.02 }),
-          y: new OneEuro({ minCutoff: 1.0, beta: 0.02 }),
-          z: new OneEuro({ minCutoff: 1.0, beta: 0.02 }),
-        };
-      }
-      const f = filtersRef.current[i];
-      return {
-        ...kp,
-        x: f.x.filter(kp.x, t),
-        y: f.y.filter(kp.y, t),
-        z: typeof kp.z === "number" ? f.z.filter(kp.z, t) : kp.z,
-      };
-    });
-  };
-
-  useEffect(() => {
-    let raf;
-    const tick = () => {
-      const bodyRaw = landmarks?.value;
-      const bodyNorm = normalizeBodyArray(bodyRaw);
-      const body = bodyNorm ? smoothBody(bodyNorm) : null; // smoothed for logic
-
-      if (!pixelPoly.length || !body) {
-        insideCountRef.current = 0;
-        setInsideOk(false);
-        // decay states with hysteresis
-        if (isStanding) {
-          standOff.current++;
-          if (standOff.current >= STATE_DROP) {
-            setIsStanding(false);
-            standOff.current = 0;
-          }
-        }
-        facingOffCount.current++;
-        if (facing !== "unknown" && facingOffCount.current >= STATE_DROP) {
-          setFacing("unknown");
-          facingOffCount.current = 0;
-        }
-        setInFrameCoverage(0);
-        raf = requestAnimationFrame(tick);
-        return;
-      }
-
-      // In-frame coverage in overlay space (mirror x for front camera preview)
-      const frameW = svgBox.w,
-        frameH = svgBox.h;
-      let tested = 0,
-        inside = 0;
-      for (const idx of TEST_POINTS) {
-        const kp = body[idx];
-        if (
-          !kp ||
-          typeof kp.x !== "number" ||
-          typeof kp.y !== "number" ||
-          getVisibility(kp) < MIN_SCORE
-        )
-          continue;
-        const normX = cameraPosition === "front" ? 1 - kp.x : kp.x;
-        const p = { x: normX * frameW + svgBox.x, y: kp.y * frameH + svgBox.y };
-        tested++;
-        if (isPointInPolygon(p, pixelPoly)) inside++;
-      }
-      const inFrameOk = tested > 0 && inside / tested >= COVERAGE_REQ;
-      const coverage = tested > 0 ? ((inside / tested) * 100).toFixed(1) : 0;
-      setInFrameCoverage(parseFloat(coverage));
-
-      // Pose state (also updates metrics)
-      const poseState = detectPoseState(body, setMetrics);
-
-      // Standing hysteresis
-      if (poseState.standing) {
-        standOn.current++;
-        standOff.current = 0;
-        if (!isStanding && standOn.current >= STATE_HOLD) {
-          setIsStanding(true);
-          standOn.current = 0;
-        }
-      } else {
-        standOff.current++;
-        standOn.current = 0;
-        if (isStanding && standOff.current >= STATE_DROP) {
-          setIsStanding(false);
-          standOff.current = 0;
-        }
-      }
-
-      // Facing hysteresis (stabilize direction + handle unknown)
-      if (poseState.facing === "unknown") {
-        facingOffCount.current++;
-        facingCandCount.current = 0;
-        if (facing !== "unknown" && facingOffCount.current >= STATE_DROP) {
-          setFacing("unknown");
-          facingOffCount.current = 0;
-        }
-      } else {
-        if (poseState.facing === facingCandidate.current) {
-          facingCandCount.current++;
-        } else {
-          facingCandidate.current = poseState.facing;
-          facingCandCount.current = 1;
-        }
-        facingOffCount.current = 0;
-        if (
-          facingCandCount.current >= STATE_HOLD &&
-          facing !== facingCandidate.current
-        ) {
-          setFacing(facingCandidate.current);
-          facingCandCount.current = 0;
-        }
-      }
-
-      // Capture gating
-      const allOk = inFrameOk && isStanding && facing !== "unknown";
-      if (allOk) {
-        insideCountRef.current++;
-        if (!insideOk && insideCountRef.current >= HOLD_FRAMES) {
-          setInsideOk(true);
-          capturePhoto();
-        }
-      } else {
-        insideCountRef.current = 0;
-        if (insideOk) setInsideOk(false);
-      }
-
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [pixelPoly, svgBox, cameraPosition, isStanding, facing]);
-
   if (!hasPermission || !device) {
     return <Text>No permission</Text>;
   }
 
   const outlineColor =
-    isStanding && facing !== "unknown" ? "#22c55e" : "#FFFFFF";
-  const allAligned =
-    inFrameCoverage >= COVERAGE_REQ * 100 && isStanding && facing !== "unknown";
+    detectionState.standing && detectionState.orientation !== "unknown"
+      ? "#22c55e"
+      : "#FFFFFF";
 
   const getFacingEmoji = (dir) => {
     switch (dir) {
       case "front":
         return "👤";
       case "left":
-        return "⇦";
+        return "⬅️";
       case "right":
-        return "⇨";
-      case "back":
-        return "🔙";
+        return "➡️";
       default:
         return "❓";
     }
+  };
+
+  const getCaptureStatus = () => {
+    const captured = capturedPosesRef.current;
+    return `${captured.front ? "✅" : "⬜"} Front | ${
+      captured.left ? "✅" : "⬜"
+    } Left | ${captured.right ? "✅" : "⬜"} Right`;
+  };
+
+  const getHoldProgress = () => {
+    const current = holdCountRef.current;
+    const max = Object.values(current).reduce((a, b) => Math.max(a, b), 0);
+    if (max === 0) return "";
+    const pct = ((max / HOLD_FRAMES) * 100).toFixed(0);
+    return `Hold: ${max}/${HOLD_FRAMES} (${pct}%)`;
   };
 
   return (
@@ -680,8 +831,22 @@ const Home = () => {
           }
         />
         <Button
-          title={showDebug ? "Hide Debug" : "Show Debug"}
+          title={showDebug ? "Hide" : "Show"}
           onPress={() => setShowDebug(!showDebug)}
+        />
+        <Button
+          title="Reset"
+          onPress={() => {
+            capturedPosesRef.current = {
+              front: false,
+              left: false,
+              right: false,
+            };
+            holdCountRef.current = { front: 0, left: 0, right: 0 };
+            orientationHistoryRef.current = [];
+            stableOrientationRef.current = "unknown";
+            Alert.alert("Reset", "Capture status reset");
+          }}
         />
       </View>
 
@@ -693,7 +858,6 @@ const Home = () => {
         photo={true}
         pixelFormat={pixelFormat}
         frameProcessor={frameProcessor}
-        // Preview stays mirrored on selfie camera by design; outputs can be controlled with isMirrored if needed.
       />
 
       <View
@@ -724,38 +888,71 @@ const Home = () => {
 
       {showDebug && (
         <View style={styles.debugPanel}>
-          <Text style={styles.debugTitle}>Debug Info</Text>
+          <Text style={styles.debugTitle}>🎯 Status</Text>
           <Text style={styles.debugText}>
-            In-Frame: {inFrameCoverage}% {inFrameCoverage >= 80 ? "✅" : "❌"}
+            Standing: {detectionState.standing ? "✅" : "❌"}
           </Text>
           <Text style={styles.debugText}>
-            Standing: {isStanding ? "✅" : "❌"}
+            Orientation: {getFacingEmoji(detectionState.orientation)}{" "}
+            {detectionState.orientation.toUpperCase()}{" "}
+            {detectionState.orientation !== "unknown" ? "✅" : "❌"}
           </Text>
           <Text style={styles.debugText}>
-            Facing: {getFacingEmoji(facing)} {facing.toUpperCase()}{" "}
-            {facing !== "unknown" ? "✅" : "❌"} (Conf:{" "}
-            {metrics.facingConfidence})
+            Confidence: {metrics.confidence}%
           </Text>
           <Text style={styles.debugText}>
-            All Aligned: {allAligned ? "✅" : "❌"}
+            In-Frame: {inFrameCoverage}% {inFrameCoverage >= 75 ? "✅" : "❌"}
           </Text>
-          <Text style={styles.debugText}>
-            Height Span: {metrics.heightSpan} (min ~{SPAN_MIN})
-          </Text>
-          <Text style={styles.debugText}>
-            Nose Vis: {metrics.noseVis} | Ear Avg: {metrics.earVisAvg} | Eye
-            Avg: {metrics.eyeVisAvg}
-          </Text>
-          <Text style={styles.debugText}>
-            L Ear: {metrics.lEarVis} | R Ear: {metrics.rEarVis}
-          </Text>
-          <Text style={styles.debugText}>Hip Vis Avg: {metrics.hipVisAvg}</Text>
-          <Text style={styles.debugText}>
-            Shldr |ΔZ|: {metrics.shoulderZDiff} | L Z: {metrics.lShoulderZ} | R
-            Z: {metrics.rShoulderZ}
-          </Text>
-          <Text style={styles.debugText}>Hip |ΔZ|: {metrics.hipZDiff}</Text>
-          <Text style={styles.debugText}>Reason: {metrics.reason}</Text>
+
+          {getHoldProgress() && (
+            <Text style={[styles.debugText, { color: "#fbbf24" }]}>
+              {getHoldProgress()}
+            </Text>
+          )}
+
+          <Text style={[styles.debugTitle, { marginTop: 8 }]}>📸 Progress</Text>
+          <Text style={styles.debugText}>{getCaptureStatus()}</Text>
+
+          {metrics.standingDetails && metrics.standingDetails.leftLegAngle && (
+            <>
+              <Text style={[styles.debugTitle, { marginTop: 8 }]}>
+                🦵 Standing
+              </Text>
+              <Text style={styles.debugText}>
+                L: {metrics.standingDetails.leftLegAngle}° | R:{" "}
+                {metrics.standingDetails.rightLegAngle}°
+              </Text>
+              <Text style={styles.debugText}>
+                Height: {metrics.standingDetails.heightSpan} | Tall:{" "}
+                {metrics.standingDetails.tallEnough ? "✅" : "❌"}
+              </Text>
+              {metrics.standingDetails.bypassedVerticalCheck && (
+                <Text style={[styles.debugText, { color: "#22c55e" }]}>
+                  ✅ Bypassed (very straight)
+                </Text>
+              )}
+            </>
+          )}
+
+          {metrics.orientationDetails && metrics.orientationDetails.reason && (
+            <>
+              <Text style={[styles.debugTitle, { marginTop: 8 }]}>
+                🧭 Orientation
+              </Text>
+              <Text style={styles.debugText}>
+                {metrics.orientationDetails.reason}
+              </Text>
+              {typeof metrics.orientationDetails.frontScore === "number" && (
+                <Text style={styles.debugText}>
+                  Score: {metrics.orientationDetails.frontScore}/4
+                  {metrics.orientationDetails.isFrontByDistance ? " 📏" : ""}
+                  {metrics.orientationDetails.isFrontBySymmetry ? " ⚖️" : ""}
+                  {metrics.orientationDetails.isFrontByDepth ? " 📐" : ""}
+                  {metrics.orientationDetails.isFrontByFace ? " 👤" : ""}
+                </Text>
+              )}
+            </>
+          )}
         </View>
       )}
     </>
@@ -781,22 +978,22 @@ const styles = StyleSheet.create((theme) => ({
     top: 80,
     left: 10,
     zIndex: 10,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
     padding: 12,
     borderRadius: 8,
-    maxWidth: "50%",
+    maxWidth: "60%",
     maxHeight: "85%",
   },
   debugTitle: {
-    color: "white",
+    color: "#22c55e",
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 13,
     marginBottom: 4,
   },
   debugText: {
     color: "white",
     fontSize: 10,
     marginBottom: 2,
-    lineHeight: 12,
+    lineHeight: 14,
   },
 }));
