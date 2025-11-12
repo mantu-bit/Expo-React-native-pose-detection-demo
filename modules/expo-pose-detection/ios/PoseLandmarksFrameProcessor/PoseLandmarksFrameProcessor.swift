@@ -1,3 +1,10 @@
+//
+//  PoseLandmarksFrameProcessor.swift
+//  ExpoPoseDetection
+//
+//  Created by itech on 12/11/25.
+//
+
 import VisionCamera
 import MediaPipeTasksVision
 import ExpoModulesCore
