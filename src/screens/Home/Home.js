@@ -110,13 +110,13 @@ const normalizeBodyArray = (body) => {
 };
 
 /* ---------- ADJUSTED Standing/facing thresholds ---------- */
-const KNEE_MIN = 120; //155; // Relaxed from 165 - natural standing may be 155-170°
-const BACK_ANGLE_MIN = 140; //155; // Relaxed from 170 - shoulder-hip-ankle alignment
-const TORSO_VERTICAL_MAX = 25; // Relaxed from 20 - allow slight lean
-const SPAN_MIN = 0.15; // Relaxed from 0.2 - adjust for camera distance
-const MIN_VIS = 0.25; // Relaxed from 0.3 - handle occlusion better
-const STATE_HOLD = 8; // Reduced from 10 for faster response
-const STATE_DROP = 5; // Reduced from 6
+const KNEE_MIN = 120;
+const BACK_ANGLE_MIN = 140;
+const TORSO_VERTICAL_MAX = 25;
+const SPAN_MIN = 0.15;
+const MIN_VIS = 0.25;
+const STATE_HOLD = 8;
+const STATE_DROP = 5;
 const DEPTH_SIDE_DELTA = 0.05;
 
 /* ---------- Pose state with DEBUGGED standing detection ---------- */
@@ -258,12 +258,12 @@ const detectPoseState = (rawBody, setMetrics) => {
 
   if (leftSideVisible && rightSideVisible) {
     // Front pose - check all conditions with diagnostics
-    const heightOk = true; //heightSpan > SPAN_MIN;
+    const heightOk = true;
     const lKneeOk = lKneeAngle > KNEE_MIN;
     const rKneeOk = rKneeAngle > KNEE_MIN;
     const lBackOk = lBackAngle > BACK_ANGLE_MIN;
     const rBackOk = rBackAngle > BACK_ANGLE_MIN;
-    const torsoOk = true; //torsoAngle < TORSO_VERTICAL_MAX;
+    const torsoOk = true;
 
     isStandingRaw =
       heightOk && lKneeOk && rKneeOk && lBackOk && rBackOk && torsoOk;
@@ -528,6 +528,7 @@ const Home = () => {
   const insideCountRef = useRef(0);
   const lastCaptureTimeRef = useRef(0);
   const isCapturingRef = useRef(false);
+  const captureLockoutRef = useRef(false); // NEW: Capture lockout
 
   const pixelPoly = useMemo(() => {
     if (!svgBox.w || !svgBox.h) return [];
@@ -600,17 +601,35 @@ const Home = () => {
   );
 
   const capturePhoto = async () => {
-    if (!cameraRef.current || isCapturingRef.current) return;
+    if (
+      !cameraRef.current ||
+      isCapturingRef.current ||
+      captureLockoutRef.current
+    )
+      return;
     const now = Date.now();
-    if (now - lastCaptureTimeRef.current < CAPTURE_COOLDOWN) return;
+    if (now - lastCaptureTimeRef.current < CAPTURE_COOLDOWN) {
+      console.log(
+        `Cooldown: ${Math.ceil(
+          (CAPTURE_COOLDOWN - (now - lastCaptureTimeRef.current)) / 1000
+        )}s remaining`
+      );
+      return;
+    }
+
     try {
       isCapturingRef.current = true;
+      captureLockoutRef.current = true;
       lastCaptureTimeRef.current = now;
+
+      console.log("📸 Starting photo capture...");
+
       const photo = await cameraRef.current.takePhoto({
         qualityPrioritization: "balanced",
         flash: "off",
         enableShutterSound: true,
       });
+
       if (!mediaPermission?.granted) {
         const { status } = await requestMediaPermission();
         if (status !== "granted") {
@@ -618,14 +637,33 @@ const Home = () => {
             "Permission Required",
             "Please grant media library access to save photos"
           );
+          captureLockoutRef.current = false;
           return;
         }
       }
+
       const asset = await MediaLibrary.createAssetAsync(photo.path);
-      Alert.alert("Success!", "Photo saved to gallery");
+      console.log("✅ Photo saved successfully");
+      Alert.alert(
+        "Success!",
+        `Photo saved to gallery. Next capture available in ${
+          CAPTURE_COOLDOWN / 1000
+        }s`
+      );
+
+      // Reset detection state
+      setInsideOk(false);
+      insideCountRef.current = 0;
+
+      // Release lockout after cooldown
+      setTimeout(() => {
+        captureLockoutRef.current = false;
+        console.log("🔓 Capture lockout released");
+      }, CAPTURE_COOLDOWN);
     } catch (error) {
       console.error("Photo capture/save error:", error);
       Alert.alert("Error", `Failed to save photo: ${error?.message ?? error}`);
+      captureLockoutRef.current = false;
     } finally {
       isCapturingRef.current = false;
     }
@@ -704,7 +742,7 @@ const Home = () => {
       setInFrameCoverage(parseFloat(coverage));
 
       const poseState = detectPoseState(body, setMetrics);
-      console.log("print JSON response ==>", JSON.stringify(poseState));
+
       if (poseState.standing) {
         standOn.current++;
         standOff.current = 0;
@@ -746,7 +784,8 @@ const Home = () => {
       }
 
       const allOk = inFrameOk && isStanding && facing !== "unknown";
-      if (allOk) {
+      if (allOk && !captureLockoutRef.current) {
+        // NEW: Check lockout
         insideCountRef.current++;
         if (!insideOk && insideCountRef.current >= HOLD_FRAMES) {
           setInsideOk(true);
@@ -854,6 +893,9 @@ const Home = () => {
           </Text>
           <Text style={styles.debugText}>
             All Aligned: {allAligned ? "✅" : "❌"}
+          </Text>
+          <Text style={styles.debugText}>
+            Capture Lock: {captureLockoutRef.current ? "🔒" : "🔓"}
           </Text>
           <Text style={styles.debugText}>
             Height: {metrics.heightSpan} (min {SPAN_MIN})

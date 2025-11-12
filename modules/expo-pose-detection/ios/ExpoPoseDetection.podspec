@@ -14,6 +14,7 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
   s.dependency 'MediaPipeTasksVision', '~> 0.10.14'
+  s.dependency 'VisionCamera'
 
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {
@@ -21,4 +22,6 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
+  # Add model as a simple resource (goes directly into main bundle)
+  s.resources = ["pose_landmarker_lite.task"]
 end

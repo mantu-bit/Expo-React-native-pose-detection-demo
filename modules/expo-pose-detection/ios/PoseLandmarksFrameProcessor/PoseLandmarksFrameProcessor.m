@@ -1,10 +1,7 @@
-#import <VisionCamera/FrameProcessorPlugin.h>
-#import <VisionCamera/FrameProcessorPluginRegistry.h>
-
-#if __has_include("poseLandmarks/poseLandmarks-Swift.h")
-#import "poseLandmarks/poseLandmarks-Swift.h"
-#else
-#import "movement-Swift.h"
-#endif
-
-VISION_EXPORT_SWIFT_FRAME_PROCESSOR(PoseLandmarksFrameProcessorPlugin, poseLandmarks)
+//#import <VisionCamera/FrameProcessorPlugin.h>
+//#import <VisionCamera/FrameProcessorPluginRegistry.h>
+//
+//// Remove the old conditional import - just use the Expo module name
+//#import "ExpoPoseDetection-Swift.h"
+//
+//VISION_EXPORT_SWIFT_FRAME_PROCESSOR(PoseLandmarksFrameProcessorPlugin, poseLandmarks)
