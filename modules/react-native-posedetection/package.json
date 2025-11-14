@@ -1,0 +1,22 @@
+{
+  "name": "react-native-posedetection",
+  "version": "0.0.0",
+  "description": "pose detection",
+  "main": "src/index",
+  "codegenConfig": {
+    "name": "PosedetectionSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.posedetection"
+    }
+  },
+  "author": " <> ()",
+  "license": "UNLICENSED",
+  "homepage": "#readme",
+  "create-react-native-library": {
+    "languages": "kotlin-objc",
+    "type": "turbo-module",
+    "version": "0.55.0"
+  }
+}

@@ -1,5 +1,5 @@
 import { Text, View } from "react-native";
-import React from "react";
+import React, { use, useEffect } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Button, ScreenWrapper, TextField } from "@/components";
 import { ms } from "@/utils";
@@ -7,6 +7,7 @@ import { fonts } from "@/theme";
 import { useDispatch } from "react-redux";
 import { login } from "@/redux/slices/userSlicer";
 import { showErrorToast } from "@/components/ToastAlert";
+import { multiply, initModel } from "modules/react-native-posedetection/src";
 
 const Login = () => {
   const { theme } = useUnistyles();
@@ -14,6 +15,10 @@ const Login = () => {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const dispatch = useDispatch();
+
+  useEffect(() => {
+    initModel();
+  }, []);
 
   const onPressLogin = () => {
     if (email.trim() === "") {
@@ -35,7 +40,7 @@ const Login = () => {
 
   return (
     <ScreenWrapper style={styles.container}>
-      <Text style={styles.title}>Login</Text>
+      <Text style={styles.title}>Login {multiply(2, 3)}</Text>
       <View style={{ marginVertical: ms(20) }}>
         <TextField
           placeholder="Enter your email"

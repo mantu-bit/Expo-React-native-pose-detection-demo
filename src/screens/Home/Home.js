@@ -25,6 +25,7 @@ import HumanOutline from "./HumanOutline";
 import { isPointInPolygon, mapViewBoxPtsToPixels } from "./geometry";
 import { VIEWBOX_POLY, VIEWBOX_W, VIEWBOX_H } from "./humanOutlinePoly";
 import * as MediaLibrary from "expo-media-library";
+import { multiply } from "modules/react-native-posedetection/src";
 
 /* ---------- One-Euro filter ---------- */
 class LowPass {
