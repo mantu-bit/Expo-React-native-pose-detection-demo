@@ -2,89 +2,110 @@ package com.posedetection
 
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.Promise
 import com.facebook.react.module.annotations.ReactModule
 import android.content.Context
-import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.Arguments
-import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.bridge.WritableArray
 import android.util.Log
+import android.graphics.Bitmap
+import java.util.Optional
+
+// MediaPipe imports
 import com.google.mediapipe.framework.image.MPImage
+import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.OutputHandler
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 
 @ReactModule(name = PosedetectionModule.NAME)
 class PosedetectionModule(reactContext: ReactApplicationContext) :
-  NativePosedetectionSpec(reactContext) {
-
-
+    NativePosedetectionSpec(reactContext) {
+  
   companion object {
     const val NAME = "Posedetection"
+    private const val TAG = "POSE_TURBO"
   }
 
-  override fun getName(): String {
-    return NAME
-  }
+  private var resultListener: OutputHandler.ResultListener<PoseLandmarkerResult, MPImage>? = null
+
+  override fun getName(): String = NAME
 
   override fun initialize() {
     super.initialize()
-    Log.d("PosedetectionModule", "🚀 Module initialized")
-    initModel()
-  }
-
-  private fun sendEvent(eventName: String, params: WritableMap?) {
-    reactApplicationContext
-      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-      .emit(eventName, params)
+    Log.d(TAG, "🚀 Module initialized")
   }
 
   @ReactMethod
-  override fun initModel() {
-    Log.d("PosedetectionModule", "🔵 initModel() called")
-    
+  override fun initModel(promise: Promise) {
+    Log.d(TAG, "🔵 initModel() called from JS")
     if (PoseLandmarkerHolder.poseLandmarker != null) {
-      Log.d("PosedetectionModule", "⚠️ Model already initialized")
-      val alreadyInitializedParams = Arguments.createMap()
-      alreadyInitializedParams.putString("status", "Model already initialized")
-      sendEvent("onPoseLandmarksStatus", alreadyInitializedParams)
+      Log.d(TAG, "⚠️ Model already initialized")
+      promise.resolve("Model already initialized")
       return
     }
-
-    Log.d("PosedetectionModule", "🟡 Starting model initialization...")
+    Log.d(TAG, "🟡 Starting model initialization...")
     
-    val resultListener = OutputHandler.ResultListener { result: PoseLandmarkerResult, inputImage: MPImage ->
-      Log.d("PoseLandmarksFrameProcessor", "Detected ${result.landmarks().size} poses")
+    try {
+      Log.d(TAG, "📝 Step 1: Creating result listener...")
       
-      val landmarksArray = Arguments.createArray()
-      
-      for (poseLandmarks in result.landmarks()) {
-        val poseMap = Arguments.createArray()
-        for ((index, landmark) in poseLandmarks.withIndex()) {
-          val landmarkMap = Arguments.createMap()
-          landmarkMap.putInt("keypoint", index)
-          landmarkMap.putDouble("x", landmark.x().toDouble())
-          landmarkMap.putDouble("y", landmark.y().toDouble())
-          landmarkMap.putDouble("z", landmark.z().toDouble())
-          landmarkMap.putDouble("visibility", landmark.visibility().orElse(0f).toDouble())
-          landmarkMap.putDouble("presence", landmark.presence().orElse(0f).toDouble())
-          poseMap.pushMap(landmarkMap)
+      // Create resultListener - EMIT DIRECTLY like Expo module (no Handler.post)
+      resultListener = OutputHandler.ResultListener<PoseLandmarkerResult, MPImage> { result, inputImage ->
+        Log.d(TAG, "🎯 Listener triggered – Detected ${result.landmarks().size} poses")
+        
+        try {
+          // Build landmarks array
+          val landmarksArray = Arguments.createArray()
+          
+          for (poseLandmarks in result.landmarks()) {
+            val poseArray = Arguments.createArray()
+            for ((index, landmark) in poseLandmarks.withIndex()) {
+              val landmarkMap: WritableMap = Arguments.createMap().apply {
+                putInt("keypoint", index)
+                putDouble("x", landmark.x().toDouble())
+                putDouble("y", landmark.y().toDouble())
+                putDouble("z", landmark.z().toDouble())
+                putDouble("visibility", landmark.visibility().orElse(0f).toDouble())
+                putDouble("presence", landmark.presence().orElse(0f).toDouble())
+              }
+              poseArray.pushMap(landmarkMap)
+            }
+            landmarksArray.pushArray(poseArray)
+          }
+          
+          // Build event params
+          val params: WritableMap = Arguments.createMap().apply {
+            putArray("landmarks", landmarksArray)
+          }
+          
+          // EMIT DIRECTLY (like Expo module) - NO Handler.post
+          Log.d(TAG, "📤 Emitting event directly from MediaPipe thread")
+          emitOnPoseLandmarksDetected(params)
+          Log.d(TAG, "✅ Event emitted – ${landmarksArray.size()} poses")
+          
+        } catch (e: Exception) {
+          Log.e(TAG, "❌ Error processing landmarks: ${e.message}", e)
+          e.printStackTrace()
         }
-        landmarksArray.pushArray(poseMap)
       }
       
-      val params = Arguments.createMap()
-      params.putArray("landmarks", landmarksArray)
-      sendEvent("onPoseLandmarksDetected", params)
-    }
-
-    try {
+      Log.d(TAG, "✅ Step 1 complete: Result listener created")
+      
+      Log.d(TAG, "📝 Step 2: Getting context...")
       val context: Context = reactApplicationContext
+      Log.d(TAG, "✅ Step 2 complete: Context obtained")
+      
+      Log.d(TAG, "📝 Step 3: Building BaseOptions...")
       val baseOptions = BaseOptions.builder()
         .setModelAssetPath("pose_landmarker_lite.task")
         .build()
+      Log.d(TAG, "✅ Step 3 complete: BaseOptions built")
       
+      Log.d(TAG, "📝 Step 4: Building PoseLandmarkerOptions...")
       val poseLandmarkerOptions = PoseLandmarker.PoseLandmarkerOptions.builder()
         .setBaseOptions(baseOptions)
         .setNumPoses(1)
@@ -92,38 +113,78 @@ class PosedetectionModule(reactContext: ReactApplicationContext) :
         .setMinTrackingConfidence(0.8f)
         .setMinPoseDetectionConfidence(0.8f)
         .setMinPosePresenceConfidence(0.8f)
-        .setResultListener(resultListener)
+        .setResultListener(resultListener!!)
         .build()
+      Log.d(TAG, "✅ Step 4 complete: PoseLandmarkerOptions built")
       
+      Log.d(TAG, "📝 Step 5: Creating PoseLandmarker...")
       PoseLandmarkerHolder.poseLandmarker = PoseLandmarker.createFromOptions(context, poseLandmarkerOptions)
+      Log.d(TAG, "✅ Step 5 complete: PoseLandmarker created")
       
-      Log.d("PosedetectionModule", "✅ Model initialized successfully!")
+      Log.d(TAG, "✅ Model initialized successfully – Listener attached!")
+      promise.resolve("Model initialized successfully")
       
-      val successParams = Arguments.createMap()
-      successParams.putString("status", "Model initialized successfully")
-      sendEvent("onPoseLandmarksStatus", successParams)
-
     } catch (e: Exception) {
-      Log.e("PosedetectionModule", "❌ Error: ${e.message}", e)
-      
-      val errorParams = Arguments.createMap()
-      errorParams.putString("error", e.message ?: "Unknown error")
-      sendEvent("onPoseLandmarksError", errorParams)
+      Log.e(TAG, "❌ FATAL Error during initialization: ${e.message}", e)
+      Log.e(TAG, "❌ Exception type: ${e.javaClass.simpleName}")
+      Log.e(TAG, "❌ Stack trace:")
+      e.printStackTrace()
+      promise.reject("INIT_ERROR", e.message ?: "Unknown error", e)
     }
   }
 
   @ReactMethod
+  override fun triggerMockDetection() {
+    Log.d(TAG, "🧪 triggerMockDetection called")
+    
+    val mockLandmarksArray = Arguments.createArray()
+    val mockPoseArray = Arguments.createArray()
+    
+    // Create 33 mock keypoints (full body)
+    for (i in 0..32) {
+      val mockLandmark = Arguments.createMap().apply {
+        putInt("keypoint", i)
+        putDouble("x", 0.5 + (i * 0.01))
+        putDouble("y", 0.5 + (i * 0.01))
+        putDouble("z", 0.0)
+        putDouble("visibility", 0.9)
+        putDouble("presence", 0.9)
+      }
+      mockPoseArray.pushMap(mockLandmark)
+    }
+    mockLandmarksArray.pushArray(mockPoseArray)
+    
+    val mockParams = Arguments.createMap().apply {
+      putArray("landmarks", mockLandmarksArray)
+    }
+    
+    Log.d(TAG, "📤 Emitting mock detection event")
+    emitOnPoseLandmarksDetected(mockParams)
+    Log.d(TAG, "✅ Mock detection event emitted")
+  }
+
+  @ReactMethod
+  override fun testEmit() {
+    Log.d(TAG, "🧪 testEmit called from JS")
+    val testParams: WritableMap = Arguments.createMap().apply {
+      putString("test", "Hello from native TurboModule!")
+      putInt("count", 42)
+    }
+    emitOnPoseLandmarksStatus(testParams)
+    Log.d(TAG, "✅ testEmit done")
+  }
+
+  @ReactMethod
   override fun addListener(eventName: String) {
-    // Required for event emitter
+    Log.d(TAG, "📝 addListener: $eventName")
   }
 
   @ReactMethod
   override fun removeListeners(count: Double) {
-    // Required for event emitter
+    Log.d(TAG, "🗑️ removeListeners: $count")
   }
 
   override fun multiply(a: Double, b: Double): Double {
     return a * b
   }
-
 }

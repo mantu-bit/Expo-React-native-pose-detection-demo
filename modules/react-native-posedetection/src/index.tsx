@@ -1,27 +1,24 @@
-// import Posedetection from './NativePosedetection';
-
-// export function multiply(a: number, b: number): number {
-//   return Posedetection.multiply(a, b);
-// }
-
-import { NativeEventEmitter, NativeModules } from "react-native";
 import type { EventSubscription } from "react-native";
 import Posedetection from "./NativePosedetection";
-
-// Create event emitter for pose detection events
-const poseDetectionEmitter = new NativeEventEmitter(
-  NativeModules.Posedetection
-);
 
 export function multiply(a: number, b: number): number {
   return Posedetection.multiply(a, b);
 }
 
-export function initModel(): void {
+export function initModel(): Promise<string> {
+  // ← FIXED: Now returns Promise
   return Posedetection.initModel();
 }
 
-// Type definitions
+export function testEmit(): void {
+  return Posedetection.testEmit();
+}
+
+export function triggerMockDetection(): void {
+  return Posedetection.triggerMockDetection();
+}
+
+// Type definitions (unchanged)
 export interface PoseLandmark {
   keypoint: number;
   x: number;
@@ -43,30 +40,30 @@ export interface PoseErrorEvent {
   error: string;
 }
 
-// Event listener helpers with modern EventSubscription
+// FIXED: All listeners use direct TurboModule .onEventName(callback) – no NativeEventEmitter!
 export function addPoseLandmarksListener(
   callback: (result: PoseLandmarksResult) => void
 ): EventSubscription {
-  return poseDetectionEmitter.addListener(
-    "onPoseLandmarksDetected",
-    (data: unknown) => callback(data as PoseLandmarksResult)
-  );
+  return Posedetection.onPoseLandmarksDetected((data) => {
+    console.log("🟢 PoseLandmarks event data:", data); // Add log for debugging
+    callback(data as PoseLandmarksResult);
+  });
 }
 
 export function addPoseStatusListener(
   callback: (status: PoseStatusEvent) => void
 ): EventSubscription {
-  return poseDetectionEmitter.addListener(
-    "onPoseLandmarksStatus",
-    (data: unknown) => callback(data as PoseStatusEvent)
-  );
+  return Posedetection.onPoseLandmarksStatus((data) => {
+    console.log("🔵 Status event data:", data); // Keep your log
+    callback(data as PoseStatusEvent);
+  });
 }
 
 export function addPoseErrorListener(
   callback: (error: PoseErrorEvent) => void
 ): EventSubscription {
-  return poseDetectionEmitter.addListener(
-    "onPoseLandmarksError",
-    (data: unknown) => callback(data as PoseErrorEvent)
-  );
+  return Posedetection.onPoseLandmarksError((data) => {
+    console.log("❌ Error event data:", data); // Add log for consistency
+    callback(data as PoseErrorEvent);
+  });
 }

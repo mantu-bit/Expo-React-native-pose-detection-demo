@@ -1,31 +1,58 @@
 package com.posedetection
 
 import android.util.Log
-import com.posedetection.PoseLandmarkerHolder
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.mrousavy.camera.frameprocessors.Frame
 import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin
 import com.mrousavy.camera.frameprocessors.VisionCameraProxy
 
-class PoseLandmarksFrameProcessorPlugin(proxy: VisionCameraProxy, options: Map<String, Any>?): FrameProcessorPlugin() {
-  override fun callback(frame: Frame, arguments: Map<String, Any>?): Any? {
-    if (PoseLandmarkerHolder.poseLandmarker == null) {
-      return "PoseLandmarker is not initialized" // Return early if initialization failed
+class PoseLandmarksFrameProcessorPlugin(
+    proxy: VisionCameraProxy,
+    options: Map<String, Any>?
+) : FrameProcessorPlugin() {
+
+  companion object {
+    private const val TAG = "POSE_TURBO"
+    private var frameCount = 0
+  }
+
+  override fun callback(frame: Frame, arguments: Map<String, Any>?): String {
+    frameCount++
+    
+    // Log first frame and every 30th frame
+    if (frameCount == 1 || frameCount % 30 == 0) {
+      Log.d(TAG, "🎥 Frame processor called - frame #$frameCount")
     }
 
-    try {
-      val mpImage: MPImage = BitmapImageBuilder(frame.imageProxy.toBitmap()).build()
+    return try {
+      if (PoseLandmarkerHolder.poseLandmarker == null) {
+        if (frameCount % 30 == 0) {
+          Log.w(TAG, "⚠️ PoseLandmarker not initialized")
+        }
+        return "Model not initialized"
+      }
 
-      val timestamp = frame.timestamp ?: System.currentTimeMillis()
+      var mpImage: MPImage? = null
+      try {
+        mpImage = BitmapImageBuilder(frame.imageProxy.toBitmap()).build()
+        val timestamp = System.currentTimeMillis()
+        
+        if (frameCount % 30 == 0) {
+          Log.d(TAG, "🔄 Calling detectAsync with timestamp: $timestamp")
+        }
+        
+        PoseLandmarkerHolder.poseLandmarker?.detectAsync(mpImage, timestamp)
+        
+        "OK"
+      } finally {
+        mpImage?.close()
+      }
 
-      PoseLandmarkerHolder.poseLandmarker?.detectAsync(mpImage, timestamp)
-
-      return "Frame processed successfully"
     } catch (e: Exception) {
+      Log.e(TAG, "❌ Frame processor error: ${e.message}", e)
       e.printStackTrace()
-      Log.e("PoseLandmarksFrameProcessor", "Error processing frame: ${e.message}")
-      return "Error processing frame: ${e.message}"
+      "ERROR: ${e.message}"
     }
   }
 }

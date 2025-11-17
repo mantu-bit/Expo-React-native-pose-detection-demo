@@ -7,11 +7,11 @@ import { ms } from "@/utils";
 import { useDispatch, useSelector } from "react-redux";
 import { logout } from "@/redux/actions/authAction";
 import { Skia } from "@shopify/react-native-skia";
-import {
-  addPoseLandmarksListener,
-  addPoseStatusListener,
-  addPoseErrorListener,
-} from "../../../modules/expo-pose-detection";
+// import {
+//   addPoseLandmarksListener,
+//   addPoseStatusListener,
+//   addPoseErrorListener,
+// } from "../../../modules/expo-pose-detection";
 import {
   Camera,
   useCameraDevice,
@@ -25,7 +25,17 @@ import HumanOutline from "./HumanOutline";
 import { isPointInPolygon, mapViewBoxPtsToPixels } from "./geometry";
 import { VIEWBOX_POLY, VIEWBOX_W, VIEWBOX_H } from "./humanOutlinePoly";
 import * as MediaLibrary from "expo-media-library";
-import { multiply } from "modules/react-native-posedetection/src";
+import {
+  addPoseErrorListener,
+  addPoseLandmarksListener,
+  addPoseStatusListener,
+  initModel,
+  multiply,
+  testEmit,
+  triggerMockDetection,
+} from "modules/react-native-posedetection/src";
+
+import NativePosedetection from "modules/react-native-posedetection/src/NativePosedetection";
 
 /* ---------- One-Euro filter ---------- */
 class LowPass {
@@ -546,12 +556,25 @@ const Home = () => {
 
   useEffect(() => {
     const landmarksSubscription = addPoseLandmarksListener((event) => {
-      landmarks.value = event.landmarks[0];
+      console.log("events", JSON.stringify(event));
+      landmarks.value = event.landmarks[0]; // This was causing the crash i think because 33 landmark points were not detected
     });
-    const statusSubscription = addPoseStatusListener(() => {});
+    const statusSubscription = addPoseStatusListener((status) => {
+      console.log("Pose detection status:", status);
+    });
     const errorSubscription = addPoseErrorListener((event) => {
       console.error("Pose detection error:", event.error);
     });
+
+    initModel()
+      .then((status) => {
+        console.log("Init Success:", status); // e.g., "Model initialized successfully"
+        Alert.alert("Init", status);
+      })
+      .catch((error) => {
+        console.error("Init Error:", error);
+        Alert.alert("Error", error);
+      });
     return () => {
       landmarksSubscription.remove();
       statusSubscription.remove();
@@ -832,9 +855,11 @@ const Home = () => {
       <View style={styles.drawControl}>
         <Button
           title="Flip"
-          onPress={() =>
-            setCameraPosition((p) => (p === "front" ? "back" : "front"))
-          }
+          onPress={() => {
+            // testEmit();
+            triggerMockDetection();
+            // setCameraPosition((p) => (p === "front" ? "back" : "front"));
+          }}
         />
         <Button
           title={showDebug ? "Hide Debug" : "Show Debug"}
