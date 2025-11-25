@@ -1,5 +1,6 @@
-#import <PosedetectionSpec/PosedetectionSpec.h>
+// Posedetection.h
+#import "PosedetectionSpec.h"
 
-@interface Posedetection : NSObject <NativePosedetectionSpec>
+@interface Posedetection : NativePosedetectionSpecBase <NativePosedetectionSpec>
 
 @end

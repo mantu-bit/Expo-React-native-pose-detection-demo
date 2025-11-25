@@ -35,8 +35,6 @@ import {
   triggerMockDetection,
 } from "modules/react-native-posedetection/src";
 
-import NativePosedetection from "modules/react-native-posedetection/src/NativePosedetection";
-
 /* ---------- One-Euro filter ---------- */
 class LowPass {
   y = null;
@@ -569,11 +567,11 @@ const Home = () => {
     initModel()
       .then((status) => {
         console.log("Init Success:", status); // e.g., "Model initialized successfully"
-        Alert.alert("Init", status);
+        // Alert.alert("Init", status);
       })
       .catch((error) => {
         console.error("Init Error:", error);
-        Alert.alert("Error", error);
+        // Alert.alert("Error", error);
       });
     return () => {
       landmarksSubscription.remove();
@@ -857,8 +855,8 @@ const Home = () => {
           title="Flip"
           onPress={() => {
             // testEmit();
-            triggerMockDetection();
-            // setCameraPosition((p) => (p === "front" ? "back" : "front"));
+            // triggerMockDetection();
+            setCameraPosition((p) => (p === "front" ? "back" : "front"));
           }}
         />
         <Button

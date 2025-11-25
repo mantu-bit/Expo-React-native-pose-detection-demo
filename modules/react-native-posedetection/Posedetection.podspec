@@ -16,5 +16,21 @@ Pod::Spec.new do |s|
   s.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
   s.private_header_files = "ios/**/*.h"
 
+  s.dependency 'MediaPipeTasksVision', '~> 0.10.14'
+  s.dependency "VisionCamera"
+
+    # For TurboModule support
+  s.pod_target_xcconfig = {
+    "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/boost\" \"$(PODS_ROOT)/Headers/Private/React-Core\"",
+    "CLANG_CXX_LANGUAGE_STANDARD" => "c++17",
+    "DEFINES_MODULE" => "YES"
+  }
+  
+  s.dependency "React-Codegen"
+  s.dependency "RCT-Folly"
+  s.dependency "RCTRequired"
+  s.dependency "RCTTypeSafety"
+  s.dependency "ReactCommon/turbomodule/core"
+  
   install_modules_dependencies(s)
 end

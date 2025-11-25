@@ -17,7 +17,7 @@ const Login = () => {
   const dispatch = useDispatch();
 
   useEffect(() => {
-    initModel();
+    // initModel();
   }, []);
 
   const onPressLogin = () => {
